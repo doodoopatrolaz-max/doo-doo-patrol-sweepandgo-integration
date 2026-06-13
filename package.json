@@ -1,0 +1,21 @@
+{
+  "name": "doo-doo-patrol-sweepandgo-integration",
+  "version": "0.1.0",
+  "description": "Phase one Sweep&Go webhook receiver and read-only MCP tools for Doo Doo Patrol.",
+  "type": "module",
+  "main": "src/server.ts",
+  "scripts": {
+    "build": "node --experimental-strip-types --check src/server.ts && node --experimental-strip-types --check src/mcp/server.ts",
+    "dev": "node --experimental-strip-types src/server.ts",
+    "start": "node --experimental-strip-types src/server.ts",
+    "mcp": "node --experimental-strip-types src/mcp/server.ts",
+    "migrate": "node --experimental-strip-types src/db/migrate.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

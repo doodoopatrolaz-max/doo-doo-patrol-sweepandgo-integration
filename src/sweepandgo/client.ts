@@ -2,6 +2,7 @@ import type { AppConfig } from "../config.ts";
 import { sanitizeForLogs } from "../logger.ts";
 
 type QueryParams = Record<string, string | number | boolean | undefined>;
+type HttpMethod = "GET" | "POST" | "PUT";
 
 export type PaginatedResponse<T = unknown> = {
   data: T[];
@@ -33,6 +34,10 @@ export class SweepAndGoApiError extends Error {
 
 export class SweepAndGoClient {
   private readonly config: Pick<AppConfig, "sweepgoApiToken" | "sweepgoBaseUrl">;
+  private readonly retryOptions = {
+    attempts: 3,
+    baseDelayMs: 500
+  };
 
   constructor(config: Pick<AppConfig, "sweepgoApiToken" | "sweepgoBaseUrl">) {
     this.config = config;
@@ -143,7 +148,7 @@ export class SweepAndGoClient {
   }
 
   private async request(
-    method: "GET" | "POST" | "PUT",
+    method: HttpMethod,
     path: string,
     query: QueryParams = {},
     body?: unknown,
@@ -172,14 +177,34 @@ export class SweepAndGoClient {
       headers["Content-Type"] = "application/json";
     }
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
+    let response: Response | undefined;
+    let responseBody: unknown;
 
-    const text = await response.text();
-    const responseBody = text ? parseJson(text) : undefined;
+    for (let attempt = 1; attempt <= this.retryOptions.attempts; attempt += 1) {
+      try {
+        response = await fetch(url, {
+          method,
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        const text = await response.text();
+        responseBody = text ? parseJson(text) : undefined;
+
+        if (!isRetryableStatus(response.status) || attempt === this.retryOptions.attempts) {
+          break;
+        }
+      } catch (error) {
+        if (attempt === this.retryOptions.attempts) {
+          throw error;
+        }
+      }
+
+      await sleep(this.retryOptions.baseDelayMs * attempt);
+    }
+
+    if (!response) {
+      throw new Error("Sweep&Go API request failed before receiving a response");
+    }
 
     if (!response.ok) {
       throw new SweepAndGoApiError(
@@ -205,4 +230,12 @@ function parseJson(text: string): unknown {
   } catch {
     return text;
   }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+async function sleep(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

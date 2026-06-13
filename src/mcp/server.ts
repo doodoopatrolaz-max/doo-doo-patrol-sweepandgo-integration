@@ -1,6 +1,9 @@
 import { loadConfig } from "../config.ts";
 import { createPool } from "../db/pool.ts";
 import { logger, sanitizeForLogs, serializeError } from "../logger.ts";
+import { PostgresOnboardingIntakeStore } from "../onboarding/postgresStore.ts";
+import type { OnboardingIntakeStore } from "../onboarding/store.ts";
+import { buildDailyDashboardReport } from "../reports/dailyDashboard.ts";
 import { SweepAndGoClient } from "../sweepandgo/client.ts";
 import type { PaginationOptions } from "../sweepandgo/client.ts";
 import { PostgresWebhookEventStore } from "../webhooks/postgresStore.ts";
@@ -86,18 +89,40 @@ function booleanInput(value: unknown, fallback: boolean): boolean {
   return value === undefined ? fallback : Boolean(value);
 }
 
-function requireWebhookStore(webhookStore: WebhookEventStore | undefined): WebhookEventStore {
-  if (!webhookStore) {
-    throw new Error("DATABASE_URL is required to read stored webhooks");
-  }
-  return webhookStore;
-}
-
 async function main() {
   const config = loadConfig();
   const client = new SweepAndGoClient(config);
-  const pool = config.databaseUrl ? await createPool(config.databaseUrl) : undefined;
-  const webhookStore = pool ? new PostgresWebhookEventStore(pool) : undefined;
+  let pool: any | undefined;
+  let webhookStore: WebhookEventStore | undefined;
+  let onboardingStore: OnboardingIntakeStore | undefined;
+
+  async function getPool() {
+    if (!config.databaseUrl) {
+      throw new Error("DATABASE_URL is required to read stored database records");
+    }
+
+    if (!pool) {
+      pool = await createPool(config.databaseUrl);
+    }
+
+    return pool;
+  }
+
+  async function getWebhookStore() {
+    if (!webhookStore) {
+      webhookStore = new PostgresWebhookEventStore(await getPool());
+    }
+
+    return webhookStore;
+  }
+
+  async function getOnboardingStore() {
+    if (!onboardingStore) {
+      onboardingStore = new PostgresOnboardingIntakeStore(await getPool());
+    }
+
+    return onboardingStore;
+  }
 
   const tools: ToolDefinition[] = [
     {
@@ -188,6 +213,26 @@ async function main() {
       },
       handler: async (input) => client.getDispatchJobs(stringInput(input.date, "date"))
     },
+    {
+      name: "get_daily_dashboard_report",
+      description: "Build the internal daily route dashboard summary for one date, grouped by tech.",
+      inputSchema: {
+        type: "object",
+        required: ["date"],
+        properties: {
+          date: {
+            type: "string",
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+            description: "Date in YYYY-MM-DD format."
+          }
+        },
+        additionalProperties: false
+      },
+      handler: async (input) => buildDailyDashboardReport({
+        date: stringInput(input.date, "date"),
+        client
+      })
+    },
     { name: "count_dogs", description: "Count dogs for happy clients.", inputSchema: emptySchema, handler: async () => client.countDogs() },
     { name: "count_happy_clients", description: "Count happy clients.", inputSchema: emptySchema, handler: async () => client.countHappyClients() },
     { name: "count_active_clients", description: "Count active clients.", inputSchema: emptySchema, handler: async () => client.countActiveClients() },
@@ -205,7 +250,7 @@ async function main() {
         additionalProperties: false
       },
       handler: async (input) => {
-        const store = requireWebhookStore(webhookStore);
+        const store = await getWebhookStore();
         return store.listEvents(Math.min(numberInput(input.limit, 25), 100), Number(input.offset ?? 0));
       }
     },
@@ -219,8 +264,38 @@ async function main() {
         additionalProperties: false
       },
       handler: async (input) => {
-        const event = await requireWebhookStore(webhookStore).getEvent(stringInput(input.id, "id"));
+        const event = await (await getWebhookStore()).getEvent(stringInput(input.id, "id"));
         return event ?? { error: "not_found" };
+      }
+    },
+    {
+      name: "list_onboarding_intakes",
+      description: "List Sweep&Go onboarding intakes captured from onboarding webhook triggers.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", maximum: 100, default: 25 },
+          offset: { type: "number", minimum: 0, default: 0 }
+        },
+        additionalProperties: false
+      },
+      handler: async (input) => {
+        const store = await getOnboardingStore();
+        return store.listIntakes(Math.min(numberInput(input.limit, 25), 100), Number(input.offset ?? 0));
+      }
+    },
+    {
+      name: "get_onboarding_intake_details",
+      description: "Read one captured onboarding intake by internal ID, including verified and missing details.",
+      inputSchema: {
+        type: "object",
+        required: ["id"],
+        properties: { id: { type: "string" } },
+        additionalProperties: false
+      },
+      handler: async (input) => {
+        const intake = await (await getOnboardingStore()).getIntake(stringInput(input.id, "id"));
+        return intake ?? { error: "not_found" };
       }
     },
     {

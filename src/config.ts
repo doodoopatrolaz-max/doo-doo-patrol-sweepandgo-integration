@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 loadDotEnv();
 
@@ -11,6 +12,19 @@ export type AppConfig = {
   databaseUrl?: string;
   sweepgoApiToken?: string;
   sweepgoBaseUrl: string;
+  dailyDashboardEnabled: boolean;
+  dailyDashboardRecipient: string;
+  dailyDashboardFrom?: string;
+  dailyDashboardTimeZone: string;
+  smtpHost?: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser?: string;
+  smtpPassword?: string;
+  goHighLevelWebhookSecret?: string;
+  gmailWebhookSecret?: string;
+  metaAdsWebhookSecret?: string;
+  googleAdsWebhookSecret?: string;
 };
 
 function optionalEnv(name: string): string | undefined {
@@ -26,6 +40,29 @@ function requiredEnv(name: string, fallback?: string): string {
   return value;
 }
 
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const value = optionalEnv(name);
+  if (value === undefined) {
+    return fallback;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function numberEnv(name: string, fallback: number): number {
+  const value = optionalEnv(name);
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+
+  return Math.floor(parsed);
+}
+
 export function loadConfig(): AppConfig {
   return {
     nodeEnv: process.env.NODE_ENV ?? "development",
@@ -34,16 +71,40 @@ export function loadConfig(): AppConfig {
     webhookPathSecret: requiredEnv("WEBHOOK_PATH_SECRET", "local-dev-secret"),
     databaseUrl: optionalEnv("DATABASE_URL"),
     sweepgoApiToken: optionalEnv("SWEEPGO_API_TOKEN"),
-    sweepgoBaseUrl: requiredEnv("SWEEPGO_BASE_URL", "https://openapi.sweepandgo.com").replace(/\/+$/, "")
+    sweepgoBaseUrl: requiredEnv("SWEEPGO_BASE_URL", "https://openapi.sweepandgo.com").replace(/\/+$/, ""),
+    dailyDashboardEnabled: booleanEnv("DAILY_DASHBOARD_ENABLED", false),
+    dailyDashboardRecipient: requiredEnv("DAILY_DASHBOARD_RECIPIENT", "bryan@doodoopatrol.com"),
+    dailyDashboardFrom: optionalEnv("DAILY_DASHBOARD_FROM") ?? optionalEnv("SMTP_FROM"),
+    dailyDashboardTimeZone: requiredEnv("DAILY_DASHBOARD_TIME_ZONE", "America/Phoenix"),
+    smtpHost: optionalEnv("SMTP_HOST"),
+    smtpPort: numberEnv("SMTP_PORT", 587),
+    smtpSecure: booleanEnv("SMTP_SECURE", false),
+    smtpUser: optionalEnv("SMTP_USER"),
+    smtpPassword: optionalEnv("SMTP_PASSWORD"),
+    goHighLevelWebhookSecret: optionalEnv("GOHIGHLEVEL_WEBHOOK_SECRET"),
+    gmailWebhookSecret: optionalEnv("GMAIL_WEBHOOK_SECRET"),
+    metaAdsWebhookSecret: optionalEnv("META_ADS_WEBHOOK_SECRET"),
+    googleAdsWebhookSecret: optionalEnv("GOOGLE_ADS_WEBHOOK_SECRET")
   };
 }
 
 function loadDotEnv() {
-  const envPath = path.resolve(process.cwd(), ".env");
+  const configDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidatePaths = [
+    process.env.SWEEPGO_ENV_FILE,
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(configDir, "../.env")
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const envPath of candidatePaths) {
+    loadDotEnvFile(envPath);
+  }
+}
+
+function loadDotEnvFile(envPath: string) {
   if (!fs.existsSync(envPath)) {
     return;
   }
-
   const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();

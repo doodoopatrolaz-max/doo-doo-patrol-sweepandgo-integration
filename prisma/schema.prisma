@@ -1,0 +1,370 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum IntegrationProvider {
+  SWEEPGO
+  GOHIGHLEVEL
+  GMAIL
+  META_ADS
+  GOOGLE_ADS
+  SYSTEM
+}
+
+enum ProcessingStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum ConnectionStatus {
+  PLANNED
+  ACTIVE
+  DISABLED
+  ERROR
+}
+
+enum LeadSource {
+  FACEBOOK
+  WEBSITE
+  OTHER
+  UNKNOWN
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  PAUSED
+  CANCELLED
+  UNKNOWN
+}
+
+enum ServiceCadence {
+  RECURRING
+  ONE_TIME
+  UNKNOWN
+}
+
+enum SyncRunStatus {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+enum ReconciliationIssueStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  IGNORED
+}
+
+model IntegrationEvent {
+  id               String              @id @default(uuid()) @db.Uuid
+  provider         IntegrationProvider
+  eventType        String              @map("event_type")
+  externalEventId  String?             @map("external_event_id")
+  eventFingerprint String              @unique @map("event_fingerprint")
+  receivedAt       DateTime            @default(now()) @map("received_at") @db.Timestamptz(6)
+  processingStatus ProcessingStatus    @default(RECEIVED) @map("processing_status")
+  payload          Json
+  errorMessage     String?             @map("error_message")
+  processedAt      DateTime?           @map("processed_at") @db.Timestamptz(6)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([provider, receivedAt])
+  @@index([processingStatus])
+  @@map("integration_events")
+}
+
+model IntegrationConnection {
+  id              String              @id @default(uuid()) @db.Uuid
+  provider        IntegrationProvider
+  status          ConnectionStatus    @default(PLANNED)
+  displayName     String              @map("display_name")
+  externalAccount String?             @map("external_account")
+  scopes          String[]            @default([])
+  metadata        Json                @default("{}")
+  lastSyncAt      DateTime?           @map("last_sync_at") @db.Timestamptz(6)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  syncRuns        SyncRun[]
+
+  @@unique([provider, displayName])
+  @@map("integration_connections")
+}
+
+model Contact {
+  id                 String    @id @default(uuid()) @db.Uuid
+  primaryEmail       String?   @map("primary_email")
+  primaryPhone       String?   @map("primary_phone")
+  firstName          String?   @map("first_name")
+  lastName           String?   @map("last_name")
+  fullName           String?   @map("full_name")
+  serviceAddress     String?   @map("service_address")
+  city               String?
+  state              String?
+  postalCode         String?   @map("postal_code")
+  externalSweepgoId  String?   @unique @map("external_sweepgo_id")
+  externalGhlId      String?   @unique @map("external_ghl_id")
+  metadata           Json      @default("{}")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  leads              Lead[]
+  opportunities      Opportunity[]
+  customers          Customer[]
+
+  @@index([primaryEmail])
+  @@index([primaryPhone])
+  @@map("contacts")
+}
+
+model Lead {
+  id                String              @id @default(uuid()) @db.Uuid
+  contactId         String?             @map("contact_id") @db.Uuid
+  provider          IntegrationProvider
+  externalLeadId    String?             @map("external_lead_id")
+  source            LeadSource          @default(UNKNOWN)
+  sourceRaw         String?             @map("source_raw")
+  receivedAt        DateTime?           @map("received_at") @db.Timestamptz(6)
+  pipelineName      String?             @map("pipeline_name")
+  stageName         String?             @map("stage_name")
+  metadata          Json                @default("{}")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  contact           Contact?            @relation(fields: [contactId], references: [id])
+
+  @@unique([provider, externalLeadId])
+  @@index([source, receivedAt])
+  @@map("leads")
+}
+
+model Opportunity {
+  id                    String              @id @default(uuid()) @db.Uuid
+  contactId             String?             @map("contact_id") @db.Uuid
+  provider              IntegrationProvider @default(GOHIGHLEVEL)
+  externalOpportunityId String?             @map("external_opportunity_id")
+  pipelineName          String              @map("pipeline_name")
+  stageName             String              @map("stage_name")
+  status                String?
+  source                LeadSource          @default(UNKNOWN)
+  openedAt              DateTime?           @map("opened_at") @db.Timestamptz(6)
+  closedAt              DateTime?           @map("closed_at") @db.Timestamptz(6)
+  metadata              Json                @default("{}")
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  contact               Contact?            @relation(fields: [contactId], references: [id])
+
+  @@unique([provider, externalOpportunityId])
+  @@index([pipelineName, stageName])
+  @@map("opportunities")
+}
+
+model Customer {
+  id                    String              @id @default(uuid()) @db.Uuid
+  contactId             String?             @map("contact_id") @db.Uuid
+  externalSweepgoId      String?             @unique @map("external_sweepgo_id")
+  status                CustomerStatus      @default(UNKNOWN)
+  source                LeadSource          @default(UNKNOWN)
+  sourceRaw             String?             @map("source_raw")
+  firstRecurringDate    DateTime?           @map("first_recurring_date") @db.Date
+  cancellationDate      DateTime?           @map("cancellation_date") @db.Date
+  monthlyRecurringRevenue Decimal?          @map("monthly_recurring_revenue") @db.Decimal(12, 2)
+  metadata              Json                @default("{}")
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  contact               Contact?            @relation(fields: [contactId], references: [id])
+  services              CustomerService[]
+  sources               CustomerSource[]
+  cancellations         Cancellation[]
+
+  @@index([status])
+  @@index([source])
+  @@map("customers")
+}
+
+model CustomerService {
+  id                 String         @id @default(uuid()) @db.Uuid
+  customerId         String         @map("customer_id") @db.Uuid
+  externalServiceId  String?        @map("external_service_id")
+  cadence            ServiceCadence @default(UNKNOWN)
+  serviceName        String?        @map("service_name")
+  frequency          String?
+  price              Decimal?       @db.Decimal(12, 2)
+  startedOn          DateTime?      @map("started_on") @db.Date
+  endedOn            DateTime?      @map("ended_on") @db.Date
+  metadata           Json           @default("{}")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customer           Customer       @relation(fields: [customerId], references: [id])
+
+  @@index([cadence])
+  @@map("customer_services")
+}
+
+model CustomerSource {
+  id             String              @id @default(uuid()) @db.Uuid
+  customerId     String              @map("customer_id") @db.Uuid
+  source         LeadSource          @default(UNKNOWN)
+  sourceRaw      String?             @map("source_raw")
+  sourceProvider IntegrationProvider @map("source_provider")
+  confidence     Decimal?            @db.Decimal(5, 2)
+  evidence       Json                @default("{}")
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customer       Customer            @relation(fields: [customerId], references: [id])
+
+  @@index([source])
+  @@map("customer_sources")
+}
+
+model AdAccount {
+  id                String              @id @default(uuid()) @db.Uuid
+  provider          IntegrationProvider
+  externalAccountId String              @map("external_account_id")
+  name              String?
+  currency          String?
+  metadata          Json                @default("{}")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  campaigns         AdCampaign[]
+  dailyPerformance  DailyAdPerformance[]
+
+  @@unique([provider, externalAccountId])
+  @@map("ad_accounts")
+}
+
+model AdCampaign {
+  id                 String              @id @default(uuid()) @db.Uuid
+  adAccountId         String              @map("ad_account_id") @db.Uuid
+  provider            IntegrationProvider
+  externalCampaignId  String              @map("external_campaign_id")
+  name                String?
+  status              String?
+  metadata            Json                @default("{}")
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  adAccount           AdAccount           @relation(fields: [adAccountId], references: [id])
+  dailyPerformance    DailyAdPerformance[]
+
+  @@unique([provider, externalCampaignId])
+  @@map("ad_campaigns")
+}
+
+model DailyAdPerformance {
+  id              String              @id @default(uuid()) @db.Uuid
+  adAccountId     String              @map("ad_account_id") @db.Uuid
+  adCampaignId    String?             @map("ad_campaign_id") @db.Uuid
+  provider        IntegrationProvider
+  reportDate      DateTime            @map("report_date") @db.Date
+  spendAmount     Decimal             @default(0) @map("spend_amount") @db.Decimal(12, 2)
+  impressions     Int                 @default(0)
+  clicks          Int                 @default(0)
+  leads           Int                 @default(0)
+  conversions     Int                 @default(0)
+  rawMetrics      Json                @default("{}") @map("raw_metrics")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  adAccount       AdAccount           @relation(fields: [adAccountId], references: [id])
+  adCampaign      AdCampaign?         @relation(fields: [adCampaignId], references: [id])
+
+  @@unique([provider, adAccountId, adCampaignId, reportDate])
+  @@index([reportDate])
+  @@map("daily_ad_performance")
+}
+
+model Cancellation {
+  id                   String     @id @default(uuid()) @db.Uuid
+  customerId            String?    @map("customer_id") @db.Uuid
+  externalSweepgoId      String?    @map("external_sweepgo_id")
+  cancelledOn           DateTime   @map("cancelled_on") @db.Date
+  reason                String?
+  reasonNormalized      String?    @map("reason_normalized")
+  sourceProvider        IntegrationProvider @default(SWEEPGO) @map("source_provider")
+  metadata              Json       @default("{}")
+  createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customer              Customer?  @relation(fields: [customerId], references: [id])
+
+  @@index([cancelledOn])
+  @@map("cancellations")
+}
+
+model DailyBusinessMetric {
+  id                         String   @id @default(uuid()) @db.Uuid
+  reportDate                 DateTime @unique @map("report_date") @db.Date
+  facebookAdSpend            Decimal  @default(0) @map("facebook_ad_spend") @db.Decimal(12, 2)
+  googleAdSpend              Decimal  @default(0) @map("google_ad_spend") @db.Decimal(12, 2)
+  facebookLeads              Int      @default(0) @map("facebook_leads")
+  websiteQuoteLeads          Int      @default(0) @map("website_quote_leads")
+  otherLeads                 Int      @default(0) @map("other_leads")
+  newRecurringCustomers      Int      @default(0) @map("new_recurring_customers")
+  newRecurringFacebook       Int      @default(0) @map("new_recurring_facebook")
+  newRecurringWebsite        Int      @default(0) @map("new_recurring_website")
+  newRecurringOther          Int      @default(0) @map("new_recurring_other")
+  newRecurringUnknown        Int      @default(0) @map("new_recurring_unknown")
+  oneTimeCleanups            Int      @default(0) @map("one_time_cleanups")
+  cancellations              Int      @default(0)
+  currentRecurringCustomers  Int      @default(0) @map("current_recurring_customers")
+  monthlyRecurringRevenue    Decimal  @default(0) @map("monthly_recurring_revenue") @db.Decimal(12, 2)
+  revenueAdded               Decimal  @default(0) @map("revenue_added") @db.Decimal(12, 2)
+  netRecurringCustomerGrowth Int      @default(0) @map("net_recurring_customer_growth")
+  sourceBreakdown            Json     @default("{}") @map("source_breakdown")
+  createdAt                  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("daily_business_metrics")
+}
+
+model SyncRun {
+  id              String                @id @default(uuid()) @db.Uuid
+  connectionId    String?               @map("connection_id") @db.Uuid
+  provider        IntegrationProvider
+  syncType        String                @map("sync_type")
+  status          SyncRunStatus         @default(STARTED)
+  startedAt       DateTime              @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt     DateTime?             @map("completed_at") @db.Timestamptz(6)
+  recordsRead     Int                   @default(0) @map("records_read")
+  recordsWritten  Int                   @default(0) @map("records_written")
+  errorMessage    String?               @map("error_message")
+  metadata        Json                  @default("{}")
+
+  connection      IntegrationConnection? @relation(fields: [connectionId], references: [id])
+
+  @@index([provider, startedAt])
+  @@map("sync_runs")
+}
+
+model ReconciliationIssue {
+  id              String                    @id @default(uuid()) @db.Uuid
+  issueType       String                    @map("issue_type")
+  status          ReconciliationIssueStatus @default(OPEN)
+  severity        String                    @default("needs_review")
+  summary         String
+  details         Json                      @default("{}")
+  detectedAt      DateTime                  @default(now()) @map("detected_at") @db.Timestamptz(6)
+  resolvedAt      DateTime?                 @map("resolved_at") @db.Timestamptz(6)
+  createdAt       DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, detectedAt])
+  @@map("reconciliation_issues")
+}

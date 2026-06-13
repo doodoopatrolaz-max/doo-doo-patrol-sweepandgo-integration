@@ -14,12 +14,17 @@ async function migrate() {
   }
 
   const pool = await createPool(config.databaseUrl);
-  const migrationPath = path.resolve(__dirname, "../../migrations/001_create_webhook_events.sql");
-  const sql = await fs.readFile(migrationPath, "utf8");
+  const migrationsDirectory = path.resolve(__dirname, "../../migrations");
+  const migrationFiles = (await fs.readdir(migrationsDirectory))
+    .filter((file) => file.endsWith(".sql"))
+    .sort();
 
   try {
-    await pool.query(sql);
-    logger.info("Database migration completed");
+    for (const file of migrationFiles) {
+      const sql = await fs.readFile(path.join(migrationsDirectory, file), "utf8");
+      await pool.query(sql);
+      logger.info({ migration: file }, "Database migration completed");
+    }
   } finally {
     await pool.end();
   }

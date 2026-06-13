@@ -1,7 +1,7 @@
 {
   "name": "doo-doo-patrol-sweepandgo-integration",
   "version": "0.1.0",
-  "description": "Phase one Sweep&Go webhook receiver and read-only MCP tools for Doo Doo Patrol.",
+  "description": "Permanent Doo Doo Patrol BI and integration system with preserved Sweep&Go intake.",
   "type": "module",
   "main": "src/server.ts",
   "scripts": {
@@ -10,12 +10,31 @@
     "start": "node --experimental-strip-types src/server.ts",
     "mcp": "node --experimental-strip-types src/mcp/server.ts",
     "migrate": "node --experimental-strip-types src/db/migrate.ts",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "sync:sweepandgo:historical": "node --experimental-strip-types src/sweepandgo/historicalSync.ts",
+    "sync:sweepandgo:daily": "node --experimental-strip-types src/sweepandgo/incrementalDailySync.ts",
+    "report:daily": "node --experimental-strip-types src/reports/sendDailyDashboard.ts",
+    "report:daily:preview": "node --experimental-strip-types src/reports/previewDailyDashboardEmail.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "prisma:validate": "prisma validate"
   },
   "engines": {
     "node": ">=24"
   },
   "dependencies": {
+    "@prisma/client": "^6.9.0",
+    "express": "^5.1.0",
+    "zod": "^3.25.64",
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.0.3",
+    "eslint": "^9.29.0",
+    "prettier": "^3.5.3",
+    "prisma": "^6.9.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3"
   }
 }

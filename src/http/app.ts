@@ -13,6 +13,8 @@ import {
 import type { WebhookProcessor } from "../webhooks/processor.ts";
 import type { WebhookEventStore } from "../webhooks/store.ts";
 
+type WebhookProvider = "sweepandgo" | "gohighlevel" | "gmail" | "meta-ads" | "google-ads";
+
 export type CreateAppOptions = {
   config: AppConfig;
   webhookStore: WebhookEventStore;
@@ -35,53 +37,30 @@ export function createRequestHandler(options: CreateAppOptions) {
           uptimeSeconds: Math.floor(process.uptime()),
           startedAt: startedAt.toISOString(),
           sweepandgoApiConfigured: Boolean(options.config.sweepgoApiToken),
-          databaseConfigured: Boolean(options.config.databaseUrl)
+          databaseConfigured: Boolean(options.config.databaseUrl),
+          dailyDashboardEnabled: options.config.dailyDashboardEnabled,
+          dailyDashboardRecipient: options.config.dailyDashboardRecipient,
+          dailyDashboardEmailConfigured: Boolean(options.config.smtpHost && options.config.dailyDashboardFrom),
+          placeholderWebhooks: {
+            goHighLevel: Boolean(options.config.goHighLevelWebhookSecret),
+            gmail: Boolean(options.config.gmailWebhookSecret),
+            metaAds: Boolean(options.config.metaAdsWebhookSecret),
+            googleAds: Boolean(options.config.googleAdsWebhookSecret)
+          }
         });
         return;
       }
 
-      const webhookPrefix = "/webhooks/sweepandgo/";
-      if (request.method === "POST" && url.pathname.startsWith(webhookPrefix)) {
-        const secret = decodeURIComponent(url.pathname.slice(webhookPrefix.length));
-        if (secret !== options.config.webhookPathSecret) {
-          logger.warn({ path: url.pathname }, "Rejected Sweep&Go webhook with invalid path secret");
-          sendJson(response, 404, { error: "not_found" });
-          return;
-        }
-
-        const payload = await readJson(request);
-        const eventType = extractEventType(payload);
-        const sweepandgoEventId = extractEventId(payload);
-        const eventFingerprint = createEventFingerprint(payload);
-
-        const result = await options.webhookStore.createEvent({
-          sweepandgoEventId,
-          eventType,
-          payload,
-          eventFingerprint
+      const webhookMatch = matchWebhookPath(url.pathname);
+      if (request.method === "POST" && webhookMatch) {
+        await receiveWebhook({
+          provider: webhookMatch.provider,
+          secret: webhookMatch.secret,
+          request,
+          response,
+          options,
+          processor
         });
-
-        sendJson(response, 200, {
-          ok: true,
-          duplicate: !result.inserted,
-          eventId: result.event.id,
-          status: result.inserted ? "received" : "duplicate"
-        });
-
-        if (!result.inserted) {
-          logger.info(
-            {
-              webhookEventId: result.event.id,
-              sweepandgoEventId,
-              eventType,
-              eventFingerprint
-            },
-            "Ignored duplicate Sweep&Go webhook"
-          );
-          return;
-        }
-
-        scheduleWebhookProcessing(options.webhookStore, processor, result.event);
         return;
       }
 
@@ -92,6 +71,99 @@ export function createRequestHandler(options: CreateAppOptions) {
       sendJson(response, 500, { error: "internal_server_error" });
     }
   };
+}
+
+function matchWebhookPath(pathname: string): { provider: WebhookProvider; secret: string } | undefined {
+  const match = pathname.match(/^\/webhooks\/([^/]+)\/(.+)$/);
+  if (!match?.[1] || !match[2]) {
+    return undefined;
+  }
+
+  const provider = match[1] as WebhookProvider;
+  if (!["sweepandgo", "gohighlevel", "gmail", "meta-ads", "google-ads"].includes(provider)) {
+    return undefined;
+  }
+
+  return {
+    provider,
+    secret: decodeURIComponent(match[2])
+  };
+}
+
+async function receiveWebhook(input: {
+  provider: WebhookProvider;
+  secret: string;
+  request: IncomingMessage;
+  response: ServerResponse;
+  options: CreateAppOptions;
+  processor: WebhookProcessor;
+}) {
+  const configuredSecret = webhookSecretForProvider(input.options.config, input.provider);
+  if (!configuredSecret) {
+    sendJson(input.response, 503, {
+      error: "webhook_not_configured",
+      provider: input.provider
+    });
+    return;
+  }
+
+  if (input.secret !== configuredSecret) {
+    logger.warn({ path: input.request.url, provider: input.provider }, "Rejected webhook with invalid path secret");
+    sendJson(input.response, 404, { error: "not_found" });
+    return;
+  }
+
+  const payload = await readJson(input.request);
+  const eventType = extractEventType(payload);
+  const externalEventId = extractEventId(payload);
+  const eventFingerprint = createEventFingerprint(payload, input.provider);
+
+  const result = await input.options.webhookStore.createEvent({
+    sweepandgoEventId: input.provider === "sweepandgo" ? externalEventId : undefined,
+    eventType: input.provider === "sweepandgo" ? eventType : `${input.provider}:${eventType}`,
+    payload: input.provider === "sweepandgo" ? payload : { provider: input.provider, raw: payload },
+    eventFingerprint
+  });
+
+  sendJson(input.response, 200, {
+    ok: true,
+    provider: input.provider,
+    duplicate: !result.inserted,
+    eventId: result.event.id,
+    status: result.inserted ? "received" : "duplicate"
+  });
+
+  if (!result.inserted) {
+    logger.info(
+      {
+        webhookEventId: result.event.id,
+        provider: input.provider,
+        externalEventId,
+        eventType,
+        eventFingerprint
+      },
+      "Ignored duplicate webhook"
+    );
+    return;
+  }
+
+  scheduleWebhookProcessing(input.options.webhookStore, input.processor, result.event);
+}
+
+function webhookSecretForProvider(config: AppConfig, provider: WebhookProvider): string | undefined {
+  if (provider === "sweepandgo") {
+    return config.webhookPathSecret;
+  }
+  if (provider === "gohighlevel") {
+    return config.goHighLevelWebhookSecret;
+  }
+  if (provider === "gmail") {
+    return config.gmailWebhookSecret;
+  }
+  if (provider === "meta-ads") {
+    return config.metaAdsWebhookSecret;
+  }
+  return config.googleAdsWebhookSecret;
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown) {

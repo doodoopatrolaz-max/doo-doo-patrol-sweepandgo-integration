@@ -1,12 +1,105 @@
-# Doo Doo Patrol Sweep&Go Integration
+# Doo Doo Patrol Business Intelligence and Integration System
 
-Phase one production-ready Sweep&Go integration for Doo Doo Patrol.
+Permanent reporting and integration system for Doo Doo Patrol.
+
+This repository is being expanded from a Sweep&Go-first integration into the long-term BI system that will combine:
+
+- Sweep&Go
+- GoHighLevel
+- Gmail
+- Meta Ads
+- Google Ads
+
+The goal is accurate daily, weekly, monthly, and custom-date reporting for lead flow, ad spend, customer growth, cancellations, monthly recurring revenue, and source attribution.
+
+## Phase One Status
+
+Completed in this phase:
+
+- Inspected and preserved the existing Sweep&Go webhook, onboarding intake, reporting email, MCP, Docker, Railway, and test code.
+- Added the initial BI database design in `prisma/schema.prisma`.
+- Added planning docs:
+  - `IMPLEMENTATION_PLAN.md`
+  - `DATA_SOURCE_MAP.md`
+  - `ENVIRONMENT_VARIABLES.md`
+  - `SWEEPANDGO_FIELD_MAP.md`
+- Added placeholder module folders for GoHighLevel, Gmail, Meta Ads, Google Ads, authentication, reconciliation, and reporting.
+- Added disabled placeholder webhook endpoints for future providers:
+  - `POST /webhooks/gohighlevel/{GOHIGHLEVEL_WEBHOOK_SECRET}`
+  - `POST /webhooks/gmail/{GMAIL_WEBHOOK_SECRET}`
+  - `POST /webhooks/meta-ads/{META_ADS_WEBHOOK_SECRET}`
+  - `POST /webhooks/google-ads/{GOOGLE_ADS_WEBHOOK_SECRET}`
+- Kept the existing Sweep&Go endpoint:
+  - `POST /webhooks/sweepandgo/{WEBHOOK_PATH_SECRET}`
+- Kept the health endpoint:
+  - `GET /health`
+
+Future provider webhook endpoints stay disabled until their secrets are configured. No live accounts are connected in phase one.
+
+## Existing Work To Preserve
+
+This repo already contained valuable working Sweep&Go integration work before the BI expansion:
+
+- Read-only Sweep&Go API client in `src/sweepandgo/client.ts`
+- Webhook receiver and deduplication logic in `src/http/app.ts` and `src/webhooks/*`
+- PostgreSQL webhook storage migrations in `migrations/`
+- Onboarding intake capture in `src/onboarding/*`
+- Daily internal route dashboard report in `src/reports/*`
+- Read-only MCP tools in `src/mcp/server.ts`
+- Docker and Railway deployment files
+- Automated tests for webhook intake, duplicate protection, onboarding intake, fingerprinting, and route dashboard reporting
+
+Do not delete or replace this working Sweep&Go integration code. Expand around it and migrate carefully.
+
+## Source Of Truth Rules
+
+- GoHighLevel is the primary source for new leads.
+- GoHighLevel pipeline and stage names must be stored in configuration.
+- Sweep&Go is the primary source for active customers, recurring service information, customer status, service details, and customer acquisition source when available.
+- Gmail onboarding emails may help reconcile new customers, but Gmail should not be the only source of truth when Sweep&Go has the same information.
+- Meta Ads is the source of truth for Facebook and Instagram ad spend and performance.
+- Google Ads is the source of truth for Google ad spend and performance.
+- New customer source values normalize to `facebook`, `website`, `other`, or `unknown`.
+
+## Security Rules
+
+- Never commit credentials, passwords, API keys, access tokens, webhook secrets, or refresh tokens.
+- `.env` is ignored by Git.
+- `.env.example` contains placeholders only.
+- Real secrets belong in Railway variables or local `.env`.
+- Do not print secrets in logs.
+- Use read-only permissions whenever possible for advertising and reporting integrations.
+
+## Current Technical Note
+
+The current runnable service still uses Node's native HTTP server to preserve the existing Sweep&Go webhook behavior. Express, Zod, Prisma, Vitest, ESLint, and Prettier are listed in `package.json` for the target architecture, but dependency installation was not available in this shell during phase one. See `IMPLEMENTATION_PLAN.md` for the migration order.
+
+## Sweep&Go Reporting Sync
+
+Phase 2 adds read-only Sweep&Go reporting sync commands:
+
+```bash
+npm run sync:sweepandgo:historical
+npm run sync:sweepandgo:daily
+```
+
+Both commands read from Sweep&Go and upsert into the BI tables by provider record IDs. They do not create, edit, or delete Sweep&Go customers, subscriptions, invoices, or payments.
+
+The field discovery notes live in `SWEEPANDGO_FIELD_MAP.md`. Important current boundary: Sweep&Go payments are not treated as monthly recurring revenue. MRR remains unknown until a reliable recurring subscription amount field or endpoint is confirmed.
+
+---
+
+# Preserved Sweep&Go Integration Notes
+
+Production-ready Sweep&Go integration for Doo Doo Patrol.
 
 This app provides:
 
 - Public Sweep&Go webhook receiver
 - Secure PostgreSQL storage for received webhook events
+- Primary onboarding intake from `client:client_onboarding_recurring`
 - Read-only Codex MCP tools for Sweep&Go lookups and local webhook review
+- Daily internal route dashboard report by tech
 - Railway-ready deployment
 - Tests for webhook intake, duplicate protection, and health checks
 
@@ -15,9 +108,11 @@ Sweep&Go docs used for this build:
 - [Sweep&Go Open API docs](https://openapi.sweepandgo.com/docs/)
 - [Sweep&Go API base URL](https://openapi.sweepandgo.com/)
 
-## Phase One Boundaries
+## Automation Boundaries
 
-This project intentionally does not create clients, update customers, change subscriptions, create coupons, process payments, send customer messages, or modify onboarding data.
+This project intentionally does not create clients, update customers, change subscriptions, create coupons, process payments, send customer messages, or modify customer-facing onboarding data.
+
+For onboarding, the app can capture Sweep&Go onboarding triggers, enrich from Sweep&Go read-only details when possible, store verified and missing details, and expose the intake record for agent review. Customer-facing onboarding email still requires Bryan or Jen to reply `APPROVED`. SMS is never sent automatically.
 
 The only non-customer-data action exposed through MCP is `retry_sweepandgo_webhook`, because Sweep&Go documents it as a webhook retry action for previously triggered webhooks.
 
@@ -76,6 +171,15 @@ Sweep&Go webhook signature verification is not included because the public Sweep
 | `WEBHOOK_PATH_SECRET` | Yes | Long random value used in the webhook URL path. Never commit it. |
 | `SWEEPGO_BASE_URL` | Yes | Defaults to `https://openapi.sweepandgo.com`. |
 | `SWEEPGO_API_TOKEN` | Later | Leave blank for the first deployment. Add it only after Sweep&Go generates the token. |
+| `DAILY_DASHBOARD_ENABLED` | No | Set to `true` to send the daily route dashboard from the running service. |
+| `DAILY_DASHBOARD_RECIPIENT` | No | Defaults to `bryan@doodoopatrol.com`. Use commas for multiple internal recipients. |
+| `DAILY_DASHBOARD_FROM` | Yes for email | Sender email address for the dashboard report. Can also use `SMTP_FROM`. |
+| `DAILY_DASHBOARD_TIME_ZONE` | No | Defaults to `America/Phoenix`. |
+| `SMTP_HOST` | Yes for email | SMTP server host, for example Google Workspace SMTP relay or Gmail SMTP. |
+| `SMTP_PORT` | No | Defaults to `587`. |
+| `SMTP_SECURE` | No | Set to `true` for implicit TLS ports such as `465`; leave `false` for port `587` STARTTLS. |
+| `SMTP_USER` | Depends on relay | SMTP login username when required. |
+| `SMTP_PASSWORD` | Depends on relay | SMTP password or Google Workspace app password when required. |
 
 ## Webhook Receiver
 
@@ -118,6 +222,7 @@ Table:
 
 ```text
 webhook_events
+onboarding_intakes
 ```
 
 Columns:
@@ -132,6 +237,22 @@ Columns:
 - `event_fingerprint`
 - `created_at`
 - `updated_at`
+
+Onboarding intake records include:
+
+- `webhook_event_id`
+- `event_type`
+- `customer_email`
+- `customer_name`
+- `client_identifier`
+- `service_type`
+- `status`
+- `sources_checked`
+- `verified_details`
+- `missing_details`
+- `calculation_notes`
+- `payload`
+- `sweepandgo_details`
 
 ## MCP Server
 
@@ -158,6 +279,7 @@ Tools:
 - `get_leads`
 - `get_out_of_area_leads`
 - `get_dispatch_jobs`
+- `get_daily_dashboard_report`
 - `count_dogs`
 - `count_happy_clients`
 - `count_active_clients`
@@ -165,7 +287,70 @@ Tools:
 - `list_active_staff`
 - `list_received_webhooks`
 - `get_received_webhook_details`
+- `list_onboarding_intakes`
+- `get_onboarding_intake_details`
 - `retry_sweepandgo_webhook`
+
+## Daily Route Dashboard
+
+The app can email Bryan an internal route dashboard every Monday through Friday at 5:00 PM Phoenix time.
+
+The report includes:
+
+- Total jobs
+- Physical stops
+- Miles
+- Stops per hour
+- Drive gap percent
+- Skipped jobs
+- Route exceptions
+- Tech-by-tech highlights
+
+Metric definitions:
+
+- `jobs`: every dispatch-board job returned by Sweep&Go for the report date.
+- `physical stops`: unique non-skipped service locations for each tech.
+- `miles`: route/job mileage when Sweep&Go includes mileage fields.
+- `stops/hour`: physical stops divided by route hours. The report uses route span first, then clock/job span when route span is not present.
+- `drive gap %`: drive minutes divided by route minutes when both values are present.
+- `skipped jobs`: jobs with skipped, cancelled, no-service, or not-serviced status/reason fields.
+- `route exceptions`: unassigned jobs, skipped jobs, missing mileage/time, low stops/hour, high drive gap, late jobs, and off-schedule jobs.
+
+Run a one-off report:
+
+```bash
+npm run report:daily
+```
+
+Run a one-off report for a specific date:
+
+```bash
+npm run report:daily -- --date=2026-06-12
+```
+
+Preview the exact email payload without sending:
+
+```bash
+npm run report:daily:preview
+```
+
+To enable the built-in weekday scheduler on Railway, set:
+
+```text
+DAILY_DASHBOARD_ENABLED=true
+DAILY_DASHBOARD_RECIPIENT=bryan@doodoopatrol.com
+DAILY_DASHBOARD_FROM=reports@doodoopatrol.com
+DAILY_DASHBOARD_TIME_ZONE=America/Phoenix
+SMTP_HOST=your-smtp-host
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-smtp-user-if-required
+SMTP_PASSWORD=your-smtp-password-or-app-password-if-required
+```
+
+Do not commit SMTP credentials or paste them into chat. Store them in Railway variables.
+
+The scheduler only sends internal reports. It does not send customer-facing messages or modify Sweep&Go data.
 
 The paginated tools accept:
 
@@ -185,10 +370,10 @@ Example Codex MCP config:
         "/absolute/path/to/Sweep&Go Integration/src/mcp/server.ts"
       ],
       "env": {
-        "DATABASE_URL": "postgres://...",
+        "DATABASE_URL": "postgres://placeholder-user:placeholder-password-host:5432/placeholder-database",
         "WEBHOOK_PATH_SECRET": "your-secret",
         "SWEEPGO_BASE_URL": "https://openapi.sweepandgo.com",
-        "SWEEPGO_API_TOKEN": "set-this-outside-chat"
+        "SWEEPGO_API_TOKEN": "replace-with-sweepandgo-api-token"
       }
     }
   }
@@ -220,7 +405,7 @@ From this project folder:
 ```bash
 git init
 git add .
-git commit -m "Build phase one Sweep&Go integration"
+git commit -m "Build Sweep&Go onboarding integration"
 git branch -M main
 git remote add origin https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
 git push -u origin main
@@ -231,7 +416,7 @@ If this repo already has Git set up, use:
 ```bash
 git status
 git add .
-git commit -m "Build phase one Sweep&Go integration"
+git commit -m "Build Sweep&Go onboarding integration"
 git push
 ```
 
@@ -332,11 +517,47 @@ Because Sweep&Go requires the public webhook URL before creating the API token:
 10. Use the Sweep&Go Test Webhooks button.
 11. Confirm the test event appears in PostgreSQL or through the `list_received_webhooks` MCP tool.
 
+## Primary Onboarding Trigger
+
+Use Sweep&Go webhooks as the low-usage primary onboarding trigger. This avoids running a Codex/Gmail polling monitor every few minutes.
+
+Primary event:
+
+- `client:client_onboarding_recurring`
+
+Supporting events:
+
+- `client:client_onboarding_onetime`
+- `client:subscription_created`
+
+Audit-only event:
+
+- `notification:client_not_assigned`
+
+When `client:client_onboarding_recurring` arrives, this app:
+
+1. Stores the original webhook payload.
+2. Creates an `onboarding_intakes` record.
+3. Extracts any customer email, customer name, client identifier, phone, service address, status, and service type from the webhook payload.
+4. If a Sweep&Go client identifier is present, calls `get_client_details_and_payments`.
+5. If only an email is present, calls `search_client_by_email`, then `get_client_details_and_payments` when a client identifier is found.
+6. Stores verified details, missing details, sources checked, and billing calculation notes.
+7. Leaves GHL and Gmail enrichment for the onboarding agent review step, because those connectors are not part of the Railway webhook app.
+
+Customer-facing messages are not sent by this webhook app. The next agent step should use the intake record, Sweep&Go details, GHL, and Gmail to prepare the internal approval email for Jen/Bryan.
+
 ## Recommended Sweep&Go Webhook Boxes
 
-For phase one, select the events that help Doo Doo Patrol track leads, client lifecycle, dispatch activity, retention, and failed payments.
+Select the events that help Doo Doo Patrol track leads, client lifecycle, dispatch activity, retention, and failed payments.
 
-Recommended:
+Minimum onboarding set:
+
+- `client:client_onboarding_recurring`
+- `client:client_onboarding_onetime`
+- `client:subscription_created`
+- `notification:client_not_assigned`
+
+Broader recommended set:
 
 - `free:quote`
 - `lead:out_of_service_area`
@@ -345,9 +566,6 @@ Recommended:
 - `client:changed_status`
 - `client:changed_info`
 - `client:changed_address`
-- `client:client_onboarding_recurring`
-- `client:client_onboarding_onetime`
-- `client:subscription_created`
 - `client:subscription_canceled`
 - `client:subscription_paused`
 - `client:subscription_unpaused`
@@ -373,7 +591,7 @@ Recommended:
 - `payroll:tip_info`
 - `dog:birthday`
 
-Do not select `client:credit_card_link_created` in phase one unless you have a clear operational reason. The receiver will preserve the full payload if Sweep&Go sends it, and that event is explicitly described by Sweep&Go as a private credit card link event.
+Do not select `client:credit_card_link_created` unless you have a clear operational reason. The receiver will preserve the full payload if Sweep&Go sends it, and that event is explicitly described by Sweep&Go as a private credit card link event.
 
 ## After The Token Is Generated
 
@@ -442,6 +660,6 @@ Redeploy:
 - Keep customer-facing automations approval-first in later phases.
 - Add customer changes only after we have real webhook examples and clear rollback rules.
 - Add alerting in phase two for webhook processing failures, token failures, and database errors.
-- Consider a small dashboard later for daily lead count, completed jobs, failed payments, inactive clients, and cancellation signals.
+- Consider expanding dashboard coverage later for daily lead count, failed payments, inactive clients, and cancellation signals.
 # doo-doo-patrol-sweepandgo-integration
 # doo-doo-patrol-sweepandgo-integration

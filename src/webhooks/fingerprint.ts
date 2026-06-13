@@ -53,10 +53,10 @@ export function extractEventType(payload: unknown): string {
   return candidates.find((candidate): candidate is string => typeof candidate === "string") ?? "unknown";
 }
 
-export function createEventFingerprint(payload: unknown): string {
+export function createEventFingerprint(payload: unknown, provider = "sweepandgo"): string {
   const eventId = extractEventId(payload);
   const eventType = extractEventType(payload);
-  const source = eventId ? `${eventType}:${eventId}` : canonicalJson(payload);
+  const source = eventId ? `${provider}:${eventType}:${eventId}` : `${provider}:${canonicalJson(payload)}`;
 
   return crypto.createHash("sha256").update(source).digest("hex");
 }

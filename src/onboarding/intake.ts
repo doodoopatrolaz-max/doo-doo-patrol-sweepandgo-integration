@@ -109,9 +109,10 @@ export class OnboardingWebhookProcessor {
         onboardingIntakeId: intake.id,
         webhookEventId: event.id,
         eventType: event.eventType,
-        customerEmail: intake.customerEmail,
-        customerName: intake.customerName,
-        clientIdentifier: intake.clientIdentifier,
+        hasCustomerEmail: Boolean(intake.customerEmail),
+        hasCustomerName: Boolean(intake.customerName),
+        hasClientIdentifier: Boolean(intake.clientIdentifier),
+        missingDetailCount: intake.missingDetails.length,
         missingDetails: intake.missingDetails
       },
       "Captured Sweep&Go onboarding intake"

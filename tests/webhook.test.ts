@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "../src/config.ts";
 import { createRequestHandler } from "../src/http/app.ts";
+import { InMemoryIntegrationEventStore } from "../src/webhooks/integrationEventStore.ts";
 import { InMemoryWebhookEventStore } from "../src/webhooks/inMemoryStore.ts";
 
 const config: AppConfig = {
@@ -31,9 +32,11 @@ const config: AppConfig = {
 
 function createTestApp() {
   const store = new InMemoryWebhookEventStore();
+  const integrationEventStore = new InMemoryIntegrationEventStore();
   const handler = createRequestHandler({
     config,
     webhookStore: store,
+    integrationEventStore,
     webhookProcessor: {
       async process() {
         return;
@@ -44,6 +47,7 @@ function createTestApp() {
 
   return {
     store,
+    integrationEventStore,
     handler
   };
 }
@@ -205,5 +209,58 @@ describe("Sweep&Go webhook receiver", () => {
 
     assert.equal(response.status, 503);
     assert.equal(response.body.error, "webhook_not_configured");
+  });
+
+  it("stores configured GoHighLevel webhooks in integration_events without touching Sweep&Go events", async () => {
+    const store = new InMemoryWebhookEventStore();
+    const integrationEventStore = new InMemoryIntegrationEventStore();
+    const handler = createRequestHandler({
+      config: {
+        ...config,
+        goHighLevelWebhookSecret: "ghl-secret"
+      },
+      webhookStore: store,
+      integrationEventStore,
+      webhookProcessor: {
+        async process() {
+          throw new Error("GoHighLevel placeholder webhooks should not use the Sweep&Go processor");
+        }
+      },
+      startedAt: new Date("2026-06-12T12:00:00.000Z")
+    });
+
+    const payload = {
+      event_type: "OpportunityCreate",
+      id: "ghl-event-1",
+      opportunityId: "redacted-opportunity-id"
+    };
+
+    const response = await requestJson({
+      handler,
+      method: "POST",
+      url: "/webhooks/gohighlevel/ghl-secret",
+      body: payload
+    });
+    const duplicateResponse = await requestJson({
+      handler,
+      method: "POST",
+      url: "/webhooks/gohighlevel/ghl-secret",
+      body: payload
+    });
+
+    const integrationEvents = await integrationEventStore.listEvents(10, 0);
+    const sweepEvents = await store.listEvents(10, 0);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.provider, "gohighlevel");
+    assert.equal(response.body.duplicate, false);
+    assert.equal(duplicateResponse.body.duplicate, true);
+    assert.equal(integrationEvents.length, 1);
+    assert.equal(integrationEvents[0].provider, "gohighlevel");
+    assert.equal(integrationEvents[0].eventType, "OpportunityCreate");
+    assert.equal(integrationEvents[0].externalEventId, "ghl-event-1");
+    assert.deepEqual(integrationEvents[0].payload, payload);
+    assert.equal(sweepEvents.length, 0);
   });
 });

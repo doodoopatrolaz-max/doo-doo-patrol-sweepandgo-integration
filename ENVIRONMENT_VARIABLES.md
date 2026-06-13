@@ -31,10 +31,20 @@ Do not commit real values. Use Railway variables for production secrets.
 
 | Variable | Purpose | Phase | Notes |
 | --- | --- | --- | --- |
-| `GOHIGHLEVEL_LOCATION_ID` | GoHighLevel location/account identifier | Later | Confirm before use. |
-| `GOHIGHLEVEL_PIPELINE_NAME` | Lead pipeline name | 1 | Current value: `Fresh Leads to Onboarding`. |
-| `GOHIGHLEVEL_STAGE_FACEBOOK_NEW_LEAD` | Facebook lead stage name | 1 | Current value: `Facebook New Lead`. |
-| `GOHIGHLEVEL_STAGE_WEBSITE_QUOTE_LEAD` | Website quote stage name | 1 | Current value: `Website Quote Lead`. |
+| `GHL_PRIVATE_INTEGRATION_TOKEN` | HighLevel Private Integration token | 3 | Store only in Railway. Never commit or paste into chat. |
+| `GHL_LOCATION_ID` | Doo Doo Patrol HighLevel sub-account/location ID | 3 | Required before live read-only discovery. |
+| `GHL_API_BASE_URL` | HighLevel API base URL | 3 | Placeholder: `https://services.leadconnectorhq.com`. |
+| `GHL_API_VERSION` | HighLevel API Version header | 3 | Placeholder: `2021-07-28`. |
+| `GHL_PIPELINE_ID` | Exact discovered pipeline ID | 3 | Fill after pipeline discovery. |
+| `GHL_PIPELINE_NAME` | Lead pipeline name | 3 | Current expected value: `Fresh Leads to Onboarding`. |
+| `GHL_FACEBOOK_STAGE_ID` | Exact discovered Facebook lead stage ID | 3 | Fill after pipeline discovery. |
+| `GHL_FACEBOOK_STAGE_NAME` | Facebook lead stage name | 3 | Current expected value: `Facebook New Lead`. |
+| `GHL_WEBSITE_STAGE_ID` | Exact discovered website quote stage ID | 3 | Fill after pipeline discovery. |
+| `GHL_WEBSITE_STAGE_NAME` | Website quote stage name | 3 | Current expected value: `Website Quote Lead`. |
+| `GOHIGHLEVEL_LOCATION_ID` | Legacy location variable alias | Compatibility | Prefer `GHL_LOCATION_ID`. |
+| `GOHIGHLEVEL_PIPELINE_NAME` | Legacy pipeline name alias | Compatibility | Prefer `GHL_PIPELINE_NAME`. |
+| `GOHIGHLEVEL_STAGE_FACEBOOK_NEW_LEAD` | Legacy Facebook stage name alias | Compatibility | Prefer `GHL_FACEBOOK_STAGE_NAME`. |
+| `GOHIGHLEVEL_STAGE_WEBSITE_QUOTE_LEAD` | Legacy website stage name alias | Compatibility | Prefer `GHL_WEBSITE_STAGE_NAME`. |
 
 ## Ads Reporting Placeholders
 

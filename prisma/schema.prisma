@@ -121,6 +121,7 @@ model Contact {
 
   leads              Lead[]
   opportunities      Opportunity[]
+  stageHistory        OpportunityStageHistory[]
   customers          Customer[]
 
   @@index([primaryEmail])
@@ -154,10 +155,22 @@ model Opportunity {
   contactId             String?             @map("contact_id") @db.Uuid
   provider              IntegrationProvider @default(GOHIGHLEVEL)
   externalOpportunityId String?             @map("external_opportunity_id")
+  pipelineId            String?             @map("pipeline_id")
   pipelineName          String              @map("pipeline_name")
+  stageId               String?             @map("stage_id")
   stageName             String              @map("stage_name")
   status                String?
   source                LeadSource          @default(UNKNOWN)
+  originalLeadSource    String              @default("unknown") @map("original_lead_source")
+  originalLeadDate      DateTime?           @map("original_lead_date") @db.Timestamptz(6)
+  currentStageEnteredAt DateTime?           @map("current_stage_entered_at") @db.Timestamptz(6)
+  previousStageId       String?             @map("previous_stage_id")
+  previousStageName     String?             @map("previous_stage_name")
+  wonAt                 DateTime?           @map("won_at") @db.Timestamptz(6)
+  lostAt                DateTime?           @map("lost_at") @db.Timestamptz(6)
+  abandonedAt           DateTime?           @map("abandoned_at") @db.Timestamptz(6)
+  assignedToExternalId  String?             @map("assigned_to_external_id")
+  contactExternalId     String?             @map("contact_external_id")
   openedAt              DateTime?           @map("opened_at") @db.Timestamptz(6)
   closedAt              DateTime?           @map("closed_at") @db.Timestamptz(6)
   metadata              Json                @default("{}")
@@ -165,10 +178,41 @@ model Opportunity {
   updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   contact               Contact?            @relation(fields: [contactId], references: [id])
+  stageHistory          OpportunityStageHistory[]
 
   @@unique([provider, externalOpportunityId])
   @@index([pipelineName, stageName])
+  @@index([pipelineId, stageId])
   @@map("opportunities")
+}
+
+model OpportunityStageHistory {
+  id                    String              @id @default(uuid()) @db.Uuid
+  provider              IntegrationProvider @default(GOHIGHLEVEL)
+  externalOpportunityId String              @map("external_opportunity_id")
+  contactId             String?             @map("contact_id") @db.Uuid
+  contactExternalId     String?             @map("contact_external_id")
+  pipelineId            String              @map("pipeline_id")
+  pipelineName          String?             @map("pipeline_name")
+  stageId               String              @map("stage_id")
+  stageName             String?             @map("stage_name")
+  previousStageId       String?             @map("previous_stage_id")
+  previousStageName     String?             @map("previous_stage_name")
+  enteredAt             DateTime            @map("entered_at") @db.Timestamptz(6)
+  exitedAt              DateTime?           @map("exited_at") @db.Timestamptz(6)
+  source                LeadSource          @default(UNKNOWN)
+  sourceRaw             String?             @map("source_raw")
+  externalEventId       String?             @map("external_event_id")
+  eventFingerprint      String?             @map("event_fingerprint")
+  metadata              Json                @default("{}")
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  contact               Contact?            @relation(fields: [contactId], references: [id])
+
+  @@unique([provider, externalOpportunityId, stageId, enteredAt])
+  @@index([source, enteredAt])
+  @@map("opportunity_stage_history")
 }
 
 model Customer {

@@ -87,6 +87,27 @@ Both commands read from Sweep&Go and upsert into the BI tables by provider recor
 
 The field discovery notes live in `SWEEPANDGO_FIELD_MAP.md`. Important current boundary: Sweep&Go payments are not treated as monthly recurring revenue. MRR remains unknown until a reliable recurring subscription amount field or endpoint is confirmed.
 
+## GoHighLevel Lead Discovery
+
+Phase 3 adds a read-only GoHighLevel foundation. It does not connect Gmail, Meta Ads, or Google Ads, and it does not modify live GHL contacts, opportunities, pipelines, workflows, tags, automations, or stages.
+
+Documentation and unanswered field questions live in `GOHIGHLEVEL_FIELD_MAP.md`.
+
+Read-only discovery commands:
+
+```bash
+npm run discover:gohighlevel:pipelines
+npm run discover:gohighlevel:opportunities -- --limit=25
+```
+
+Production-safe smoke test:
+
+```bash
+npm run smoke:production
+```
+
+The discovery commands stop before any live API call unless `GHL_PRIVATE_INTEGRATION_TOKEN` and `GHL_LOCATION_ID` are configured in the environment. Do not put the HighLevel token in `.env.example`, source code, README examples, GitHub, logs, or chat.
+
 ---
 
 # Preserved Sweep&Go Integration Notes
@@ -180,6 +201,17 @@ Sweep&Go webhook signature verification is not included because the public Sweep
 | `SMTP_SECURE` | No | Set to `true` for implicit TLS ports such as `465`; leave `false` for port `587` STARTTLS. |
 | `SMTP_USER` | Depends on relay | SMTP login username when required. |
 | `SMTP_PASSWORD` | Depends on relay | SMTP password or Google Workspace app password when required. |
+| `GHL_PRIVATE_INTEGRATION_TOKEN` | Phase 3 | HighLevel Private Integration token. Store only in Railway. |
+| `GHL_LOCATION_ID` | Phase 3 | Doo Doo Patrol HighLevel sub-account/location ID. |
+| `GHL_API_BASE_URL` | No | Defaults to `https://services.leadconnectorhq.com`. |
+| `GHL_API_VERSION` | No | Defaults to `2021-07-28`. |
+| `GHL_PIPELINE_ID` | After discovery | Exact `Fresh Leads to Onboarding` pipeline ID. |
+| `GHL_PIPELINE_NAME` | No | Defaults to `Fresh Leads to Onboarding`. |
+| `GHL_FACEBOOK_STAGE_ID` | After discovery | Exact Facebook lead stage ID. |
+| `GHL_FACEBOOK_STAGE_NAME` | No | Defaults to `Facebook New Lead`. |
+| `GHL_WEBSITE_STAGE_ID` | After discovery | Exact website quote stage ID. |
+| `GHL_WEBSITE_STAGE_NAME` | No | Defaults to `Website Quote Lead`. |
+| `GOHIGHLEVEL_WEBHOOK_SECRET` | Later | Enables the future GHL webhook endpoint. Leave blank until planned. |
 
 ## Webhook Receiver
 

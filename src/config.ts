@@ -22,6 +22,16 @@ export type AppConfig = {
   smtpUser?: string;
   smtpPassword?: string;
   goHighLevelWebhookSecret?: string;
+  goHighLevelPrivateIntegrationToken?: string;
+  goHighLevelApiBaseUrl: string;
+  goHighLevelApiVersion: string;
+  goHighLevelLocationId?: string;
+  goHighLevelPipelineId?: string;
+  goHighLevelPipelineName: string;
+  goHighLevelFacebookStageId?: string;
+  goHighLevelFacebookStageName: string;
+  goHighLevelWebsiteStageId?: string;
+  goHighLevelWebsiteStageName: string;
   gmailWebhookSecret?: string;
   metaAdsWebhookSecret?: string;
   googleAdsWebhookSecret?: string;
@@ -82,6 +92,16 @@ export function loadConfig(): AppConfig {
     smtpUser: optionalEnv("SMTP_USER"),
     smtpPassword: optionalEnv("SMTP_PASSWORD"),
     goHighLevelWebhookSecret: optionalEnv("GOHIGHLEVEL_WEBHOOK_SECRET"),
+    goHighLevelPrivateIntegrationToken: optionalEnv("GHL_PRIVATE_INTEGRATION_TOKEN"),
+    goHighLevelApiBaseUrl: requiredEnv("GHL_API_BASE_URL", "https://services.leadconnectorhq.com").replace(/\/+$/, ""),
+    goHighLevelApiVersion: requiredEnv("GHL_API_VERSION", "2021-07-28"),
+    goHighLevelLocationId: optionalEnv("GHL_LOCATION_ID") ?? optionalEnv("GOHIGHLEVEL_LOCATION_ID"),
+    goHighLevelPipelineId: optionalEnv("GHL_PIPELINE_ID"),
+    goHighLevelPipelineName: optionalEnv("GHL_PIPELINE_NAME") ?? optionalEnv("GOHIGHLEVEL_PIPELINE_NAME") ?? "Fresh Leads to Onboarding",
+    goHighLevelFacebookStageId: optionalEnv("GHL_FACEBOOK_STAGE_ID"),
+    goHighLevelFacebookStageName: optionalEnv("GHL_FACEBOOK_STAGE_NAME") ?? optionalEnv("GOHIGHLEVEL_STAGE_FACEBOOK_NEW_LEAD") ?? "Facebook New Lead",
+    goHighLevelWebsiteStageId: optionalEnv("GHL_WEBSITE_STAGE_ID"),
+    goHighLevelWebsiteStageName: optionalEnv("GHL_WEBSITE_STAGE_NAME") ?? optionalEnv("GOHIGHLEVEL_STAGE_WEBSITE_QUOTE_LEAD") ?? "Website Quote Lead",
     gmailWebhookSecret: optionalEnv("GMAIL_WEBHOOK_SECRET"),
     metaAdsWebhookSecret: optionalEnv("META_ADS_WEBHOOK_SECRET"),
     googleAdsWebhookSecret: optionalEnv("GOOGLE_ADS_WEBHOOK_SECRET")

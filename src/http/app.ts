@@ -10,6 +10,10 @@ import {
   NoopWebhookProcessor,
   scheduleWebhookProcessing,
 } from "../webhooks/processor.ts";
+import {
+  InMemoryIntegrationEventStore,
+  type IntegrationEventStore
+} from "../webhooks/integrationEventStore.ts";
 import type { WebhookProcessor } from "../webhooks/processor.ts";
 import type { WebhookEventStore } from "../webhooks/store.ts";
 
@@ -18,6 +22,7 @@ type WebhookProvider = "sweepandgo" | "gohighlevel" | "gmail" | "meta-ads" | "go
 export type CreateAppOptions = {
   config: AppConfig;
   webhookStore: WebhookEventStore;
+  integrationEventStore?: IntegrationEventStore;
   webhookProcessor?: WebhookProcessor;
   startedAt?: Date;
 };
@@ -25,6 +30,7 @@ export type CreateAppOptions = {
 export function createRequestHandler(options: CreateAppOptions) {
   const startedAt = options.startedAt ?? new Date();
   const processor = options.webhookProcessor ?? new NoopWebhookProcessor();
+  const integrationEventStore = options.integrationEventStore ?? new InMemoryIntegrationEventStore();
 
   return async function handleRequest(request: IncomingMessage, response: ServerResponse) {
     try {
@@ -59,7 +65,8 @@ export function createRequestHandler(options: CreateAppOptions) {
           request,
           response,
           options,
-          processor
+          processor,
+          integrationEventStore
         });
         return;
       }
@@ -97,6 +104,7 @@ async function receiveWebhook(input: {
   response: ServerResponse;
   options: CreateAppOptions;
   processor: WebhookProcessor;
+  integrationEventStore: IntegrationEventStore;
 }) {
   const configuredSecret = webhookSecretForProvider(input.options.config, input.provider);
   if (!configuredSecret) {
@@ -108,7 +116,7 @@ async function receiveWebhook(input: {
   }
 
   if (input.secret !== configuredSecret) {
-    logger.warn({ path: input.request.url, provider: input.provider }, "Rejected webhook with invalid path secret");
+    logger.warn({ provider: input.provider }, "Rejected webhook with invalid path secret");
     sendJson(input.response, 404, { error: "not_found" });
     return;
   }
@@ -118,12 +126,21 @@ async function receiveWebhook(input: {
   const externalEventId = extractEventId(payload);
   const eventFingerprint = createEventFingerprint(payload, input.provider);
 
-  const result = await input.options.webhookStore.createEvent({
-    sweepandgoEventId: input.provider === "sweepandgo" ? externalEventId : undefined,
-    eventType: input.provider === "sweepandgo" ? eventType : `${input.provider}:${eventType}`,
-    payload: input.provider === "sweepandgo" ? payload : { provider: input.provider, raw: payload },
-    eventFingerprint
-  });
+  const result =
+    input.provider === "sweepandgo"
+      ? await input.options.webhookStore.createEvent({
+          sweepandgoEventId: externalEventId,
+          eventType,
+          payload,
+          eventFingerprint
+        })
+      : await input.integrationEventStore.createEvent({
+          provider: input.provider,
+          eventType,
+          externalEventId,
+          eventFingerprint,
+          payload
+        });
 
   sendJson(input.response, 200, {
     ok: true,
@@ -136,7 +153,7 @@ async function receiveWebhook(input: {
   if (!result.inserted) {
     logger.info(
       {
-        webhookEventId: result.event.id,
+        eventId: result.event.id,
         provider: input.provider,
         externalEventId,
         eventType,
@@ -147,7 +164,9 @@ async function receiveWebhook(input: {
     return;
   }
 
-  scheduleWebhookProcessing(input.options.webhookStore, input.processor, result.event);
+  if (input.provider === "sweepandgo") {
+    scheduleWebhookProcessing(input.options.webhookStore, input.processor, result.event);
+  }
 }
 
 function webhookSecretForProvider(config: AppConfig, provider: WebhookProvider): string | undefined {

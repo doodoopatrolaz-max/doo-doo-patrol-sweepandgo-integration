@@ -6,7 +6,7 @@ export function normalizeCustomerSource(value: unknown): NormalizedCustomerSourc
   }
 
   const normalized = value.toLowerCase();
-  if (normalized.includes("facebook") || normalized.includes("fb") || normalized.includes("meta")) {
+  if (normalized.includes("facebook") || normalized.includes("instagram") || normalized.includes("fb") || normalized.includes("ig") || normalized.includes("meta")) {
     return "facebook";
   }
 
@@ -62,7 +62,15 @@ function normalizeExplicitSourceText(value: string): NormalizedCustomerSource {
   const params = parseTrackingParams(value);
   const utmSource = params.get("utm_source")?.toLowerCase();
 
-  if (utmSource === "facebook" || utmSource === "fb" || utmSource === "meta" || normalized.includes("facebook")) {
+  if (
+    utmSource === "facebook" ||
+    utmSource === "fb" ||
+    utmSource === "instagram" ||
+    utmSource === "ig" ||
+    utmSource === "meta" ||
+    normalized.includes("facebook") ||
+    normalized.includes("instagram")
+  ) {
     return "facebook";
   }
 

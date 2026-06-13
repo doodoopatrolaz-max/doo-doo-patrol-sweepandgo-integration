@@ -108,6 +108,38 @@ npm run smoke:production
 
 The discovery commands stop before any live API call unless `GHL_PRIVATE_INTEGRATION_TOKEN` and `GHL_LOCATION_ID` are configured in the environment. Do not put the HighLevel token in `.env.example`, source code, README examples, GitHub, logs, or chat.
 
+## GoHighLevel Webhook Intake
+
+Phase 4 prepares live GoHighLevel webhook intake without connecting Gmail, Meta Ads, or Google Ads.
+
+The enabled endpoint format is:
+
+```text
+POST /webhooks/gohighlevel/{GOHIGHLEVEL_WEBHOOK_SECRET}
+```
+
+GoHighLevel webhook events are saved in `integration_events` before processing. Duplicate deliveries are ignored by event fingerprint. Processing currently supports sanitized opportunity stage, opportunity status, and opportunity create-style payloads using stable GoHighLevel opportunity and contact IDs.
+
+Lead source rules:
+
+- Only opportunities in the configured `GHL_PIPELINE_ID` are classified.
+- `GHL_FACEBOOK_STAGE_ID` becomes original source `facebook`.
+- `GHL_WEBSITE_STAGE_ID` becomes original source `website`.
+- Later follow-up stages do not create new leads.
+- Status changes preserve status only and do not create leads.
+- Conflicting Facebook/website original-stage evidence creates a reconciliation issue.
+- Customer names, email addresses, phone numbers, addresses, and message bodies must not be printed in logs.
+
+Run the synthetic verification only with Railway variables injected:
+
+```bash
+npm run test:gohighlevel:webhook
+```
+
+The synthetic test uses fake IDs only and reports aggregate counts. It does not call the HighLevel API.
+
+HighLevel activation is not complete until the selected HighLevel webhook method is confirmed in the UI. Official HighLevel Marketplace documentation confirms webhook URL configuration and workflow triggers such as `Pipeline Stage Changed` and `Opportunity Status Changed`; the reviewed official docs did not confirm a standard signing header or timestamp replay-validation mechanism for standard CRM/workflow webhook deliveries.
+
 ---
 
 # Preserved Sweep&Go Integration Notes

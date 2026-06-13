@@ -23,8 +23,13 @@ export type CreateAppOptions = {
   config: AppConfig;
   webhookStore: WebhookEventStore;
   integrationEventStore?: IntegrationEventStore;
+  integrationEventProcessor?: IntegrationEventProcessor;
   webhookProcessor?: WebhookProcessor;
   startedAt?: Date;
+};
+
+export type IntegrationEventProcessor = {
+  process(event: import("../webhooks/integrationEventStore.ts").IntegrationEventRecord): Promise<unknown>;
 };
 
 export function createRequestHandler(options: CreateAppOptions) {
@@ -166,7 +171,41 @@ async function receiveWebhook(input: {
 
   if (input.provider === "sweepandgo") {
     scheduleWebhookProcessing(input.options.webhookStore, input.processor, result.event);
+  } else if (input.provider === "gohighlevel" && input.options.integrationEventProcessor) {
+    scheduleIntegrationEventProcessing(
+      input.integrationEventStore,
+      input.options.integrationEventProcessor,
+      result.event
+    );
   }
+}
+
+function scheduleIntegrationEventProcessing(
+  store: IntegrationEventStore,
+  processor: IntegrationEventProcessor,
+  event: import("../webhooks/integrationEventStore.ts").IntegrationEventRecord
+) {
+  setImmediate(async () => {
+    await store.updateStatus?.(event.id, "processing");
+    try {
+      await processor.process(event);
+      await store.updateStatus?.(event.id, "processed");
+    } catch (error) {
+      const serialized = sanitizeForLogs(serializeError(error));
+      await store.updateStatus?.(event.id, "failed", serialized && typeof serialized === "object" && "message" in serialized
+        ? String(serialized.message)
+        : "Processing failed");
+      logger.error(
+        {
+          provider: event.provider,
+          eventId: event.id,
+          eventType: event.eventType,
+          error: serialized
+        },
+        "Integration webhook processing failed"
+      );
+    }
+  });
 }
 
 function webhookSecretForProvider(config: AppConfig, provider: WebhookProvider): string | undefined {

@@ -8,6 +8,8 @@ import { OnboardingWebhookProcessor } from "./onboarding/intake.ts";
 import { PostgresOnboardingIntakeStore } from "./onboarding/postgresStore.ts";
 import { startDailyDashboardScheduler } from "./reports/scheduler.ts";
 import { SweepAndGoClient } from "./sweepandgo/client.ts";
+import { GoHighLevelWebhookProcessor } from "./gohighlevel/webhookProcessor.ts";
+import { PostgresGoHighLevelWebhookStore } from "./gohighlevel/store.ts";
 import { InMemoryWebhookEventStore } from "./webhooks/inMemoryStore.ts";
 import {
   InMemoryIntegrationEventStore,
@@ -25,11 +27,20 @@ const integrationEventStore = pool
 const onboardingStore = pool ? new PostgresOnboardingIntakeStore(pool) : new InMemoryOnboardingIntakeStore();
 const sweepandgoClient = new SweepAndGoClient(config);
 const webhookProcessor = new OnboardingWebhookProcessor(onboardingStore, sweepandgoClient);
+const goHighLevelWebhookProcessor = pool
+  ? new GoHighLevelWebhookProcessor(new PostgresGoHighLevelWebhookStore(pool), config)
+  : undefined;
 
 if (!config.databaseUrl) {
   logger.warn("DATABASE_URL is not configured; using temporary in-memory webhook storage");
 }
-const app = createRequestHandler({ config, webhookStore, integrationEventStore, webhookProcessor });
+const app = createRequestHandler({
+  config,
+  webhookStore,
+  integrationEventStore,
+  webhookProcessor,
+  integrationEventProcessor: goHighLevelWebhookProcessor
+});
 const dailyDashboardTimer = startDailyDashboardScheduler(config);
 
 const server = http.createServer(app).listen(config.port, config.host, () => {

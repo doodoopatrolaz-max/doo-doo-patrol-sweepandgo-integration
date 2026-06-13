@@ -186,26 +186,24 @@ Use the existing webhook intake and deduplication path. Store every incoming GoH
 
 | Event | Why needed | Expected key fields | Deduplication key |
 |---|---|---|---|
-| `ContactCreate` | New contact source and matching context | `type`, `locationId`, `id`, `source`, `dateAdded`, `email`, `phone`, `tags`, `customFields` | `provider:type:id:dateAdded` or payload fingerprint |
-| `ContactUpdate` | Source/custom field/tag changes | Same contact fields | `provider:type:id:dateAdded/updated` or payload fingerprint |
-| `ContactTagUpdate` | Tag-based source reconciliation | `type`, `locationId`, `id`, `tags` | `provider:type:id:tags/date` or payload fingerprint |
-| `OpportunityCreate` | Initial opportunity source and stage | `type`, `locationId`, `id`, `contactId`, `pipelineId`, `pipelineStageId`, `source`, `status`, `dateAdded` | `provider:type:id:stage:status:dateAdded` |
-| `OpportunityStageUpdate` | First-stage-entry tracking going forward | `type`, `locationId`, `id`, `contactId`, `pipelineId`, `pipelineStageId`, `status`, `dateAdded` | `provider:type:id:stage:dateAdded` |
-| `OpportunityStatusUpdate` | Won/lost/abandoned timing going forward | `type`, `id`, `pipelineId`, `pipelineStageId`, `status`, `dateAdded` | `provider:type:id:status:dateAdded` |
-| `OpportunityUpdate` | General opportunity reconciliation | `type`, `id`, `pipelineId`, `pipelineStageId`, `source`, `status` | `provider:type:id:stage:status:date` |
-| `OpportunityDelete` | Deletion/tombstone reconciliation | `type`, `id`, `pipelineId`, `pipelineStageId`, `status` | `provider:type:id:delete:date` |
+| `pipeline_stage_updated` / `Pipeline Stage Changed` | First-stage-entry tracking going forward | `type` or `event_type`, `locationId`, `opportunityId` or nested `opportunity.id`, `contactId`, `pipelineId`, `pipelineStageId`, `timestamp` or stage-change timestamp | HighLevel event ID when present; otherwise canonical payload fingerprint |
+| `opportunity_status_changed` / `Opportunity Status Changed` | Preserve `open`, `won`, `lost`, and `abandoned` status timing | `type` or `event_type`, `opportunityId`, `pipelineId`, `pipelineStageId`, `status`, `timestamp` | HighLevel event ID when present; otherwise canonical payload fingerprint |
+| `opportunity_created` / `Opportunity Created` | Optional current-state reconciliation only | `type` or `event_type`, `opportunityId`, `contactId`, `pipelineId`, `pipelineStageId`, `source`, `status`, created timestamp | HighLevel event ID when present; otherwise canonical payload fingerprint |
 
 Signature/auth validation:
 
 - Current local architecture supports a provider-specific secret in the path.
-- Confirm whether HighLevel signs webhook payloads or provides a webhook secret header before activation.
-- If HighLevel provides signatures, add signature validation before enabling live webhooks.
+- Official HighLevel Marketplace documentation and app UI bundle confirm HTTPS webhook URL configuration and workflow trigger names such as `Pipeline Stage Changed` and `Opportunity Status Changed`.
+- The reviewed official docs did not confirm a standard signing header, public key, replay timestamp header, or timestamp tolerance for standard CRM/workflow webhook deliveries.
+- If the HighLevel UI exposes signing, handshake, or custom header verification for the selected webhook method, enable it and add the exact header validation before relying on live data.
+- Until an official signing method is confirmed for the selected delivery method, use the secret path as an additional protection, keep payloads idempotent by fingerprint, and do not expose the URL publicly outside HighLevel/Railway setup.
 
 Retry/order concerns:
 
-- Webhooks can arrive out of order. Stage history processing must use event timestamps where available and preserve original lead source.
+- Webhooks can arrive out of order. Stage history processing uses event timestamps where available, preserves original lead source, and does not move current stage backward for older deliveries.
 - Duplicate deliveries must be idempotent through event fingerprinting.
 - If a stage change arrives before an opportunity create event, store the event and upsert from available IDs.
+- Same opportunity entering both configured original lead stages creates a `gohighlevel_original_source_conflict` reconciliation issue instead of double counting.
 
 ## Historical Reporting Limitation
 

@@ -14,6 +14,7 @@
     "sync:sweepandgo:daily": "node --experimental-strip-types src/sweepandgo/incrementalDailySync.ts",
     "discover:gohighlevel:pipelines": "node --experimental-strip-types scripts/gohighlevel_discover_pipelines.mjs",
     "discover:gohighlevel:opportunities": "node --experimental-strip-types scripts/gohighlevel_limited_opportunity_discovery.mjs",
+    "test:gohighlevel:webhook": "node --experimental-strip-types scripts/gohighlevel_webhook_synthetic_test.mjs",
     "smoke:production": "node --experimental-strip-types scripts/production_smoke_test.mjs",
     "report:daily": "node --experimental-strip-types src/reports/sendDailyDashboard.ts",
     "report:daily:preview": "node --experimental-strip-types src/reports/previewDailyDashboardEmail.ts",

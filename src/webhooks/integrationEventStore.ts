@@ -28,6 +28,11 @@ export type CreateIntegrationEventResult = {
 
 export interface IntegrationEventStore {
   createEvent(input: CreateIntegrationEventInput): Promise<CreateIntegrationEventResult>;
+  updateStatus?(
+    id: string,
+    status: IntegrationEventProcessingStatus,
+    errorMessage?: string
+  ): Promise<void>;
   listEvents?(limit: number, offset: number): Promise<IntegrationEventRecord[]>;
 }
 
@@ -63,6 +68,23 @@ export class InMemoryIntegrationEventStore implements IntegrationEventStore {
     return [...this.events.values()]
       .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt))
       .slice(offset, offset + limit);
+  }
+
+  async updateStatus(
+    id: string,
+    status: IntegrationEventProcessingStatus,
+    errorMessage?: string
+  ): Promise<void> {
+    const event = this.events.get(id);
+    if (!event) {
+      return;
+    }
+
+    event.processingStatus = status;
+    event.errorMessage = errorMessage;
+    if (status === "processed" || status === "failed") {
+      event.processedAt = new Date().toISOString();
+    }
   }
 }
 
@@ -133,5 +155,24 @@ export class PostgresIntegrationEventStore implements IntegrationEventStore {
     );
 
     return result.rows.map(mapIntegrationEventRow);
+  }
+
+  async updateStatus(
+    id: string,
+    status: IntegrationEventProcessingStatus,
+    errorMessage?: string
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE integration_events
+       SET processing_status = $2,
+           error_message = $3,
+           processed_at = CASE
+             WHEN $2 IN ('processed', 'failed') THEN NOW()
+             ELSE processed_at
+           END,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [id, status, errorMessage ?? null]
+    );
   }
 }

@@ -22,7 +22,7 @@ Do not commit real values. Use Railway variables for production secrets.
 
 | Variable | Purpose | Phase | Notes |
 | --- | --- | --- | --- |
-| `GOHIGHLEVEL_WEBHOOK_SECRET` | GoHighLevel webhook placeholder secret | Later | Leave blank in phase one. |
+| `GOHIGHLEVEL_WEBHOOK_SECRET` | GoHighLevel webhook path secret | 4 | Long random value stored only in Railway. Enables `/webhooks/gohighlevel/{secret}`. Do not paste into chat or docs. |
 | `GMAIL_WEBHOOK_SECRET` | Gmail webhook placeholder secret | Later | Leave blank in phase one. Confirm whether Gmail uses push notifications before enabling. |
 | `META_ADS_WEBHOOK_SECRET` | Meta Ads webhook placeholder secret | Later | Leave blank in phase one. |
 | `GOOGLE_ADS_WEBHOOK_SECRET` | Google Ads webhook placeholder secret | Later | Leave blank in phase one. |
@@ -45,6 +45,15 @@ Do not commit real values. Use Railway variables for production secrets.
 | `GOHIGHLEVEL_PIPELINE_NAME` | Legacy pipeline name alias | Compatibility | Prefer `GHL_PIPELINE_NAME`. |
 | `GOHIGHLEVEL_STAGE_FACEBOOK_NEW_LEAD` | Legacy Facebook stage name alias | Compatibility | Prefer `GHL_FACEBOOK_STAGE_NAME`. |
 | `GOHIGHLEVEL_STAGE_WEBSITE_QUOTE_LEAD` | Legacy website stage name alias | Compatibility | Prefer `GHL_WEBSITE_STAGE_NAME`. |
+
+## GoHighLevel Webhook Security Confirmation
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| Secret path validation | Required | Supported by the app using `GOHIGHLEVEL_WEBHOOK_SECRET`. |
+| Official signing header | Needs confirmation | Do not invent a header name. Confirm in the selected HighLevel webhook or workflow UI before live activation. |
+| Replay timestamp header | Needs confirmation | Add timestamp tolerance only if HighLevel documents or exposes a timestamp header for this webhook source. |
+| Custom outbound header | Optional if UI supports it | If HighLevel workflow webhook action supports custom headers, use it for traceability only unless official signing is available. |
 
 ## Ads Reporting Placeholders
 

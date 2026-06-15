@@ -415,6 +415,168 @@ describe("GoHighLevel webhook processor", () => {
     assert.equal(opportunity?.stageId, "stage_FOLLOW_UP");
     assert.equal(store.stageHistory.length, 2);
   });
+
+  it("classifies customData lead_source facebook when internal stage IDs are unavailable", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_LEAD_SOURCE_FACEBOOK",
+        contact_id: "ct_SANITIZED_LEAD_SOURCE_FACEBOOK",
+        pipeline_id: "workflow_pipeline_label",
+        pipeline_stage_id: "workflow_stage_label",
+        lead_source: "facebook"
+      }
+    }, "evt_17"));
+
+    const opportunity = store.opportunities.get("opp_SANITIZED_LEAD_SOURCE_FACEBOOK");
+    assert.equal(opportunity?.originalLeadSource, "facebook");
+    assert.equal(opportunity?.originalLeadDate, "2026-06-13T12:00:00.000Z");
+    assert.equal(store.stageHistory[0].source, "facebook");
+    assert.equal(store.issues.length, 0);
+  });
+
+  it("classifies customData lead_source website when internal stage IDs are unavailable", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_LEAD_SOURCE_WEBSITE",
+        contact_id: "ct_SANITIZED_LEAD_SOURCE_WEBSITE",
+        pipeline_id: "workflow_pipeline_label",
+        pipeline_stage_id: "workflow_stage_label",
+        lead_source: "website"
+      }
+    }, "evt_18"));
+
+    const opportunity = store.opportunities.get("opp_SANITIZED_LEAD_SOURCE_WEBSITE");
+    assert.equal(opportunity?.originalLeadSource, "website");
+    assert.equal(opportunity?.originalLeadDate, "2026-06-13T12:00:00.000Z");
+    assert.equal(store.stageHistory[0].source, "website");
+    assert.equal(store.issues.length, 0);
+  });
+
+  it("classifies top-level lead_source and camelCase leadSource", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      event_type: "opportunity_created",
+      opportunity_id: "opp_SANITIZED_TOP_LEVEL_SOURCE",
+      contact_id: "ct_SANITIZED_TOP_LEVEL_SOURCE",
+      pipeline_id: "workflow_pipeline_label",
+      pipeline_stage_id: "workflow_stage_label",
+      lead_source: "facebook"
+    }, "evt_19"));
+    await processor.process(integrationEvent({
+      eventType: "opportunity_created",
+      opportunityId: "opp_SANITIZED_CAMEL_SOURCE",
+      contactId: "ct_SANITIZED_CAMEL_SOURCE",
+      pipelineId: "workflow_pipeline_label",
+      pipelineStageId: "workflow_stage_label",
+      leadSource: "website"
+    }, "evt_20"));
+
+    assert.equal(store.opportunities.get("opp_SANITIZED_TOP_LEVEL_SOURCE")?.originalLeadSource, "facebook");
+    assert.equal(store.opportunities.get("opp_SANITIZED_CAMEL_SOURCE")?.originalLeadSource, "website");
+  });
+
+  it("rejects unexpected lead_source values and creates a reconciliation issue", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_UNEXPECTED_SOURCE",
+        contact_id: "ct_SANITIZED_UNEXPECTED_SOURCE",
+        pipeline_id: "workflow_pipeline_label",
+        pipeline_stage_id: "workflow_stage_label",
+        lead_source: "Facebook Lead"
+      }
+    }, "evt_21"));
+
+    assert.equal(store.opportunities.get("opp_SANITIZED_UNEXPECTED_SOURCE")?.originalLeadSource, "unknown");
+    assert.equal(store.stageHistory[0].source, "unknown");
+    assert.equal(store.issues.length, 1);
+    assert.equal(store.issues[0].issueType, "gohighlevel_unexpected_lead_source");
+  });
+
+  it("rejects blank lead_source values as unsupported", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_BLANK_SOURCE",
+        contact_id: "ct_SANITIZED_BLANK_SOURCE",
+        pipeline_id: "workflow_pipeline_label",
+        pipeline_stage_id: "workflow_stage_label",
+        lead_source: " "
+      }
+    }, "evt_21_blank"));
+
+    assert.equal(store.opportunities.get("opp_SANITIZED_BLANK_SOURCE")?.originalLeadSource, "unknown");
+    assert.equal(store.stageHistory[0].source, "unknown");
+    assert.equal(store.issues.length, 1);
+    assert.equal(store.issues[0].issueType, "gohighlevel_unexpected_lead_source");
+  });
+
+  it("keeps exact internal stage ID match stronger than workflow lead_source", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_STAGE_STRONGER",
+        contact_id: "ct_SANITIZED_STAGE_STRONGER",
+        pipeline_id: "pipe_TARGET",
+        pipeline_stage_id: "stage_FACEBOOK",
+        lead_source: "website"
+      }
+    }, "evt_22"));
+
+    assert.equal(store.opportunities.get("opp_SANITIZED_STAGE_STRONGER")?.originalLeadSource, "facebook");
+    assert.equal(store.stageHistory[0].source, "facebook");
+    assert.equal(store.issues.length, 1);
+    assert.equal(store.issues[0].issueType, "gohighlevel_lead_source_stage_conflict");
+  });
+
+  it("creates a conflict issue when workflow lead_source differs from existing original source", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_EXISTING_CONFLICT",
+        contact_id: "ct_SANITIZED_EXISTING_CONFLICT",
+        pipeline_id: "workflow_pipeline_label",
+        pipeline_stage_id: "workflow_stage_label",
+        lead_source: "facebook"
+      }
+    }, "evt_23"));
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_EXISTING_CONFLICT",
+        contact_id: "ct_SANITIZED_EXISTING_CONFLICT",
+        pipeline_id: "workflow_pipeline_label",
+        pipeline_stage_id: "workflow_stage_label",
+        lead_source: "website"
+      }
+    }, "evt_24"));
+
+    assert.equal(store.opportunities.get("opp_SANITIZED_EXISTING_CONFLICT")?.originalLeadSource, "facebook");
+    assert.equal(store.issues.length, 1);
+    assert.equal(store.issues[0].issueType, "gohighlevel_original_source_conflict");
+  });
 });
 
 function resolveOriginalSource(

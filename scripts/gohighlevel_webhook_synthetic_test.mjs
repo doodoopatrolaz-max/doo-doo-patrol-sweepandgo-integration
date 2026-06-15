@@ -81,6 +81,39 @@ try {
         pipeline_stage_id: config.goHighLevelFacebookStageId
       }
     }),
+    syntheticPayload("facebook_lead_source", {
+      eventId: `${idPrefix}event_facebook_lead_source`,
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: `${idPrefix}opp_facebook_lead_source`,
+        contact_id: `${idPrefix}contact_facebook_lead_source`,
+        pipeline_id: `${idPrefix}workflow_pipeline_label`,
+        pipeline_stage_id: `${idPrefix}workflow_stage_label`,
+        lead_source: "facebook"
+      }
+    }),
+    syntheticPayload("website_lead_source", {
+      eventId: `${idPrefix}event_website_lead_source`,
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: `${idPrefix}opp_website_lead_source`,
+        contact_id: `${idPrefix}contact_website_lead_source`,
+        pipeline_id: `${idPrefix}workflow_pipeline_label`,
+        pipeline_stage_id: `${idPrefix}workflow_stage_label`,
+        lead_source: "website"
+      }
+    }),
+    syntheticPayload("unexpected_lead_source", {
+      eventId: `${idPrefix}event_unexpected_lead_source`,
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: `${idPrefix}opp_unexpected_lead_source`,
+        contact_id: `${idPrefix}contact_unexpected_lead_source`,
+        pipeline_id: `${idPrefix}workflow_pipeline_label`,
+        pipeline_stage_id: `${idPrefix}workflow_stage_label`,
+        lead_source: "Facebook Lead"
+      }
+    }),
     syntheticPayload("website", {
       event_type: "pipeline_stage_updated",
       eventId: `${idPrefix}event_website`,
@@ -160,7 +193,7 @@ try {
     responses.push(await invokeWebhook({ handler, secret: config.goHighLevelWebhookSecret, body }));
   }
 
-  await waitForProcessing(pool, testRunId, 8);
+  await waitForProcessing(pool, testRunId, 12);
   const after = await countSyntheticState(pool, testRunId, idPrefix);
 
   const output = {
@@ -176,13 +209,16 @@ try {
       after
     },
     assertions: {
-      facebookLeadCountedOnce: after.opportunitiesByOriginalSource.facebook === 2,
-      websiteLeadCountedOnce: after.opportunitiesByOriginalSource.website === 1,
+      facebookLeadCountedOnce: after.opportunitiesByOriginalSource.facebook === 3,
+      websiteLeadCountedOnce: after.opportunitiesByOriginalSource.website === 2,
       wrongPipelineIgnoredForClassification: after.wrongPipelineClassifiedCount === 0,
       statusUpdateDidNotCreateLead: after.statusOpportunityLeadSource === "unknown",
       customDataShapeClassified: after.customDataFacebookOpportunityCount === 1,
-      duplicateEventsDidNotInsert: after.integrationEvents === 9,
-      reconciliationIssuesCreated: after.reconciliationIssues >= 1,
+      workflowFacebookLeadSourceClassified: after.workflowFacebookLeadSourceOpportunityCount === 1,
+      workflowWebsiteLeadSourceClassified: after.workflowWebsiteLeadSourceOpportunityCount === 1,
+      unexpectedLeadSourceRejected: after.unexpectedLeadSourceClassifiedCount === 0,
+      duplicateEventsDidNotInsert: after.integrationEvents === 12,
+      reconciliationIssuesCreated: after.reconciliationIssues >= 2,
       noDuplicateContacts: after.duplicateContacts === 0,
       noDuplicateOpportunities: after.duplicateOpportunities === 0,
       noDuplicateStageHistoryEvents: after.duplicateStageHistoryEvents === 0
@@ -212,7 +248,10 @@ async function invokeWebhook({ handler, secret, body }) {
   const request = Readable.from([Buffer.from(JSON.stringify(body))]);
   request.method = "POST";
   request.url = `/webhooks/gohighlevel/${encodeURIComponent(secret)}`;
-  request.headers = { "content-type": "application/json" };
+  request.headers = {
+    "content-type": "application/json",
+    "x-ddp-webhook-source": "gohighlevel"
+  };
 
   const response = {
     statusCode: 200,
@@ -268,6 +307,9 @@ async function countSyntheticState(pool, runId, prefix) {
     wrongPipeline,
     statusOpportunity,
     customDataFacebookOpportunity,
+    workflowFacebookLeadSourceOpportunity,
+    workflowWebsiteLeadSourceOpportunity,
+    unexpectedLeadSourceClassified,
     duplicateContacts,
     duplicateOpportunities,
     duplicateStageHistoryEvents
@@ -309,6 +351,32 @@ async function countSyntheticState(pool, runId, prefix) {
          AND original_lead_source = 'facebook'
          AND original_lead_date IS NOT NULL`,
       [`${prefix}opp_facebook_custom_data`]
+    ),
+    scalar(
+      pool,
+      `SELECT COUNT(*)::int
+       FROM opportunities
+       WHERE external_opportunity_id = $1
+         AND original_lead_source = 'facebook'
+         AND original_lead_date IS NOT NULL`,
+      [`${prefix}opp_facebook_lead_source`]
+    ),
+    scalar(
+      pool,
+      `SELECT COUNT(*)::int
+       FROM opportunities
+       WHERE external_opportunity_id = $1
+         AND original_lead_source = 'website'
+         AND original_lead_date IS NOT NULL`,
+      [`${prefix}opp_website_lead_source`]
+    ),
+    scalar(
+      pool,
+      `SELECT COUNT(*)::int
+       FROM opportunities
+       WHERE external_opportunity_id = $1
+         AND original_lead_source <> 'unknown'`,
+      [`${prefix}opp_unexpected_lead_source`]
     ),
     scalar(
       pool,
@@ -366,6 +434,9 @@ async function countSyntheticState(pool, runId, prefix) {
     wrongPipelineClassifiedCount: Number(wrongPipeline),
     statusOpportunityLeadSource: statusOpportunity,
     customDataFacebookOpportunityCount: Number(customDataFacebookOpportunity),
+    workflowFacebookLeadSourceOpportunityCount: Number(workflowFacebookLeadSourceOpportunity),
+    workflowWebsiteLeadSourceOpportunityCount: Number(workflowWebsiteLeadSourceOpportunity),
+    unexpectedLeadSourceClassifiedCount: Number(unexpectedLeadSourceClassified),
     duplicateContacts: Number(duplicateContacts),
     duplicateOpportunities: Number(duplicateOpportunities),
     duplicateStageHistoryEvents: Number(duplicateStageHistoryEvents)

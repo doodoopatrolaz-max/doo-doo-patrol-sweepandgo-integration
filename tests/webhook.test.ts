@@ -62,13 +62,14 @@ async function requestJson(input: {
   method: string;
   url: string;
   body?: unknown;
+  headers?: Record<string, string>;
 }) {
   const chunks: Buffer[] = [];
   const requestBody = input.body === undefined ? [] : [Buffer.from(JSON.stringify(input.body))];
   const request = Readable.from(requestBody) as IncomingMessage;
   request.method = input.method;
   request.url = input.url;
-  request.headers = { "content-type": "application/json" };
+  request.headers = { "content-type": "application/json", ...input.headers };
 
   const response = {
     statusCode: 200,
@@ -262,5 +263,36 @@ describe("Sweep&Go webhook receiver", () => {
     assert.equal(integrationEvents[0].externalEventId, "ghl-event-1");
     assert.deepEqual(integrationEvents[0].payload, payload);
     assert.equal(sweepEvents.length, 0);
+  });
+
+  it("rejects GoHighLevel requests when the optional source header is wrong", async () => {
+    const integrationEventStore = new InMemoryIntegrationEventStore();
+    const handler = createRequestHandler({
+      config: {
+        ...config,
+        goHighLevelWebhookSecret: "ghl-secret"
+      },
+      webhookStore: new InMemoryWebhookEventStore(),
+      integrationEventStore,
+      startedAt: new Date("2026-06-12T12:00:00.000Z")
+    });
+
+    const response = await requestJson({
+      handler,
+      method: "POST",
+      url: "/webhooks/gohighlevel/ghl-secret",
+      headers: {
+        "x-ddp-webhook-source": "wrong-source"
+      },
+      body: {
+        event_type: "opportunity_created",
+        opportunityId: "redacted-opportunity-id"
+      }
+    });
+
+    const integrationEvents = await integrationEventStore.listEvents(10, 0);
+
+    assert.equal(response.status, 404);
+    assert.equal(integrationEvents.length, 0);
   });
 });

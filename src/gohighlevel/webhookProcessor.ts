@@ -31,6 +31,8 @@ type ParsedGoHighLevelWebhook = {
   status?: string;
   assignedTo?: string;
   sourceRaw?: string;
+  workflowLeadSource?: NormalizedCustomerSource;
+  invalidWorkflowLeadSource?: string;
   eventTimestamp: string;
   isStageEvent: boolean;
   isStatusEvent: boolean;
@@ -104,11 +106,25 @@ export class GoHighLevelWebhookProcessor {
       const sourceFromStage = pipelineMatches
         ? classifyStage(parsed.stageId, parsed.stageName, this.stageConfig)
         : undefined;
+      if (sourceFromStage && parsed.workflowLeadSource && sourceFromStage !== parsed.workflowLeadSource) {
+        await this.store.createReconciliationIssue({
+          issueType: "gohighlevel_lead_source_stage_conflict",
+          summary: "GoHighLevel workflow lead_source conflicts with the configured lead stage",
+          details: {
+            ...safeIssueDetails(parsed, event),
+            stageSource: sourceFromStage,
+            workflowLeadSource: parsed.workflowLeadSource
+          }
+        });
+      }
+      const trustedWorkflowSource = sourceFromStage
+        ? undefined
+        : await this.resolveTrustedWorkflowSource(parsed, event);
       const existing = await this.store.findOpportunity(parsed.externalOpportunityId);
       const originalSourceUpdate = await this.resolveOriginalSourceUpdate(
         existing,
         parsed,
-        sourceFromStage,
+        sourceFromStage ?? trustedWorkflowSource,
         event
       );
 
@@ -144,6 +160,8 @@ export class GoHighLevelWebhookProcessor {
           locationId: parsed.locationId,
           sourceRaw: parsed.sourceRaw,
           sourceNormalized: normalizeCustomerSource(parsed.sourceRaw),
+          workflowLeadSource: parsed.workflowLeadSource,
+          workflowLeadSourceRejected: parsed.invalidWorkflowLeadSource ? true : undefined,
           eventType: parsed.eventType,
           webhookEventId: event.id,
           webhookEvidence: parsed.isStageEvent
@@ -171,7 +189,7 @@ export class GoHighLevelWebhookProcessor {
           previousStageId: parsed.previousStageId,
           previousStageName: parsed.previousStageName,
           enteredAt: parsed.eventTimestamp,
-          source: sourceFromStage ?? "unknown",
+          source: sourceFromStage ?? trustedWorkflowSource ?? "unknown",
           sourceRaw: parsed.sourceRaw,
           externalEventId: event.externalEventId,
           eventFingerprint: event.eventFingerprint,
@@ -235,6 +253,26 @@ export class GoHighLevelWebhookProcessor {
     });
 
     return {};
+  }
+
+  private async resolveTrustedWorkflowSource(
+    parsed: ParsedGoHighLevelWebhook,
+    event: IntegrationEventRecord
+  ): Promise<NormalizedCustomerSource | undefined> {
+    if (parsed.invalidWorkflowLeadSource) {
+      await this.store.createReconciliationIssue({
+        issueType: "gohighlevel_unexpected_lead_source",
+        summary: "GoHighLevel webhook included an unsupported workflow lead_source value",
+        details: safeIssueDetails(parsed, event)
+      });
+      return undefined;
+    }
+
+    if (!parsed.workflowLeadSource) {
+      return undefined;
+    }
+
+    return parsed.isOpportunityCreateEvent ? parsed.workflowLeadSource : undefined;
   }
 }
 
@@ -343,6 +381,12 @@ export function parseGoHighLevelWebhook(event: IntegrationEventRecord): ParsedGo
     status: firstString([opportunity.status, customData.status, root.status]),
     assignedTo: firstString([opportunity.assignedTo, customData.assignedTo, root.assignedTo]),
     sourceRaw: firstString([opportunity.source, customData.source, root.source]),
+    ...parseWorkflowLeadSource(firstPresentString([
+      root.lead_source,
+      customData.lead_source,
+      root.leadSource,
+      customData.leadSource
+    ])),
     eventTimestamp: normalizeTimestamp(firstString([
       root.eventTimestamp,
       customData.eventTimestamp,
@@ -376,6 +420,22 @@ export function parseGoHighLevelWebhook(event: IntegrationEventRecord): ParsedGo
       OPPORTUNITY_CREATE_EVENT_TYPES.has(eventKey),
     testRunId: firstString([root.testRunId, customData.testRunId, opportunity.testRunId])
   };
+}
+
+function parseWorkflowLeadSource(value: string | undefined): {
+  workflowLeadSource?: NormalizedCustomerSource;
+  invalidWorkflowLeadSource?: string;
+} {
+  if (value === undefined) {
+    return {};
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "facebook" || normalized === "website") {
+    return { workflowLeadSource: normalized };
+  }
+
+  return { invalidWorkflowLeadSource: "unsupported" };
 }
 
 function shouldUpdateCurrentStage(
@@ -444,6 +504,18 @@ function normalizeTimestamp(value: string | undefined): string {
 function firstString(values: unknown[]): string | undefined {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return undefined;
+}
+
+function firstPresentString(values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string") {
       return value.trim();
     }
     if (typeof value === "number" && Number.isFinite(value)) {

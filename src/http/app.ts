@@ -126,6 +126,12 @@ async function receiveWebhook(input: {
     return;
   }
 
+  if (input.provider === "gohighlevel" && !hasValidOptionalGoHighLevelSourceHeader(input.request)) {
+    logger.warn({ provider: input.provider }, "Rejected webhook with invalid source header");
+    sendJson(input.response, 404, { error: "not_found" });
+    return;
+  }
+
   const payload = await readJson(input.request);
   const eventType = extractEventType(payload);
   const externalEventId = extractEventId(payload);
@@ -222,6 +228,15 @@ function webhookSecretForProvider(config: AppConfig, provider: WebhookProvider):
     return config.metaAdsWebhookSecret;
   }
   return config.googleAdsWebhookSecret;
+}
+
+function hasValidOptionalGoHighLevelSourceHeader(request: IncomingMessage): boolean {
+  const value = request.headers["x-ddp-webhook-source"];
+  const firstValue = Array.isArray(value) ? value[0] : value;
+  if (firstValue === undefined) {
+    return true;
+  }
+  return firstValue.trim().toLowerCase() === "gohighlevel";
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown) {

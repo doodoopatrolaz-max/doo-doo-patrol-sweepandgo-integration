@@ -71,6 +71,16 @@ try {
       pipelineStageId: config.goHighLevelFacebookStageId,
       timestamp: baseTimestamp
     }),
+    syntheticPayload("facebook_custom_data", {
+      eventId: `${idPrefix}event_facebook_custom_data`,
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: `${idPrefix}opp_facebook_custom_data`,
+        contact_id: `${idPrefix}contact_facebook_custom_data`,
+        pipeline_id: config.goHighLevelPipelineId,
+        pipeline_stage_id: config.goHighLevelFacebookStageId
+      }
+    }),
     syntheticPayload("website", {
       event_type: "pipeline_stage_updated",
       eventId: `${idPrefix}event_website`,
@@ -166,11 +176,12 @@ try {
       after
     },
     assertions: {
-      facebookLeadCountedOnce: after.opportunitiesByOriginalSource.facebook === 1,
+      facebookLeadCountedOnce: after.opportunitiesByOriginalSource.facebook === 2,
       websiteLeadCountedOnce: after.opportunitiesByOriginalSource.website === 1,
       wrongPipelineIgnoredForClassification: after.wrongPipelineClassifiedCount === 0,
       statusUpdateDidNotCreateLead: after.statusOpportunityLeadSource === "unknown",
-      duplicateEventsDidNotInsert: after.integrationEvents === 8,
+      customDataShapeClassified: after.customDataFacebookOpportunityCount === 1,
+      duplicateEventsDidNotInsert: after.integrationEvents === 9,
       reconciliationIssuesCreated: after.reconciliationIssues >= 1,
       noDuplicateContacts: after.duplicateContacts === 0,
       noDuplicateOpportunities: after.duplicateOpportunities === 0,
@@ -256,6 +267,7 @@ async function countSyntheticState(pool, runId, prefix) {
     issues,
     wrongPipeline,
     statusOpportunity,
+    customDataFacebookOpportunity,
     duplicateContacts,
     duplicateOpportunities,
     duplicateStageHistoryEvents
@@ -288,6 +300,15 @@ async function countSyntheticState(pool, runId, prefix) {
        LIMIT 1`,
       [`${prefix}opp_status`],
       "unknown"
+    ),
+    scalar(
+      pool,
+      `SELECT COUNT(*)::int
+       FROM opportunities
+       WHERE external_opportunity_id = $1
+         AND original_lead_source = 'facebook'
+         AND original_lead_date IS NOT NULL`,
+      [`${prefix}opp_facebook_custom_data`]
     ),
     scalar(
       pool,
@@ -344,6 +365,7 @@ async function countSyntheticState(pool, runId, prefix) {
     reconciliationIssues: Number(issues),
     wrongPipelineClassifiedCount: Number(wrongPipeline),
     statusOpportunityLeadSource: statusOpportunity,
+    customDataFacebookOpportunityCount: Number(customDataFacebookOpportunity),
     duplicateContacts: Number(duplicateContacts),
     duplicateOpportunities: Number(duplicateOpportunities),
     duplicateStageHistoryEvents: Number(duplicateStageHistoryEvents)

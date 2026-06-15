@@ -159,7 +159,7 @@ export class GoHighLevelWebhookProcessor {
         ...statusDates
       });
 
-      if (parsed.isStageEvent && parsed.pipelineId && parsed.stageId) {
+      if ((parsed.isStageEvent || parsed.isOpportunityCreateEvent) && parsed.pipelineId && parsed.stageId) {
         await this.store.insertStageHistory({
           externalOpportunityId: parsed.externalOpportunityId,
           contactId: contactId ?? stored.contactId,
@@ -212,7 +212,7 @@ export class GoHighLevelWebhookProcessor {
     sourceFromStage: NormalizedCustomerSource | undefined,
     event: IntegrationEventRecord
   ): Promise<{ source?: NormalizedCustomerSource; date?: string }> {
-    if (!sourceFromStage || !parsed.isStageEvent) {
+    if (!sourceFromStage || (!parsed.isStageEvent && !parsed.isOpportunityCreateEvent)) {
       return {};
     }
 
@@ -240,73 +240,126 @@ export class GoHighLevelWebhookProcessor {
 
 export function parseGoHighLevelWebhook(event: IntegrationEventRecord): ParsedGoHighLevelWebhook {
   const root = asRecord(event.payload) ?? {};
+  const customData = asRecord(root.customData) ?? {};
   const opportunity = asRecord(root.opportunity) ?? root;
   const contact = asRecord(root.contact) ?? {};
   const eventType = firstString([
-    event.eventType,
     root.event_type,
+    customData.event_type,
     root.eventType,
+    customData.eventType,
     root.type,
+    customData.type,
     root.event,
-    root.triggeringEvent
+    customData.event,
+    root.triggeringEvent,
+    customData.triggeringEvent,
+    event.eventType
   ]) ?? "unknown";
   const eventKey = normalizeEventType(eventType);
 
   return {
     eventType,
-    externalEventId: firstString([event.externalEventId, root.event_id, root.eventId, root.webhookId]),
+    externalEventId: firstString([
+      event.externalEventId,
+      root.event_id,
+      customData.event_id,
+      root.eventId,
+      customData.eventId,
+      root.webhookId,
+      customData.webhookId
+    ]),
     externalOpportunityId: firstString([
       opportunity.id,
+      customData.id,
       opportunity.opportunityId,
+      customData.opportunityId,
       root.opportunityId,
+      customData.opportunity_id,
       root.opportunity_id
     ]),
     externalContactId: firstString([
       opportunity.contactId,
+      customData.contactId,
       opportunity.contact_id,
+      customData.contact_id,
       root.contactId,
       root.contact_id,
       contact.id
     ]),
-    locationId: firstString([opportunity.locationId, root.locationId, contact.locationId]),
-    pipelineId: firstString([opportunity.pipelineId, opportunity.pipeline_id, root.pipelineId, root.pipeline_id]),
-    pipelineName: firstString([opportunity.pipelineName, root.pipelineName]),
+    locationId: firstString([opportunity.locationId, customData.locationId, root.locationId, contact.locationId]),
+    pipelineId: firstString([
+      opportunity.pipelineId,
+      customData.pipelineId,
+      opportunity.pipeline_id,
+      customData.pipeline_id,
+      root.pipelineId,
+      root.pipeline_id
+    ]),
+    pipelineName: firstString([opportunity.pipelineName, customData.pipelineName, root.pipelineName]),
     stageId: firstString([
       opportunity.pipelineStageId,
+      customData.pipelineStageId,
       opportunity.pipeline_stage_id,
+      customData.pipeline_stage_id,
       opportunity.stageId,
+      customData.stageId,
+      customData.stage_id,
       root.pipelineStageId,
       root.pipeline_stage_id,
-      root.stageId
+      root.stageId,
+      root.stage_id
     ]),
     stageName: firstString([
       opportunity.pipelineStageName,
+      customData.pipelineStageName,
       opportunity.stageName,
+      customData.stageName,
       root.pipelineStageName,
-      root.stageName
+      root.stageName,
+      customData.stage_name,
+      root.stage_name
     ]),
     previousStageId: firstString([
       opportunity.previousPipelineStageId,
+      customData.previousPipelineStageId,
       opportunity.previousStageId,
+      customData.previousStageId,
       root.previousPipelineStageId,
-      root.previousStageId
+      root.previousStageId,
+      customData.previous_stage_id,
+      root.previous_stage_id
     ]),
     previousStageName: firstString([
       opportunity.previousPipelineStageName,
+      customData.previousPipelineStageName,
       opportunity.previousStageName,
+      customData.previousStageName,
       root.previousPipelineStageName,
-      root.previousStageName
+      root.previousStageName,
+      customData.previous_stage_name,
+      root.previous_stage_name
     ]),
-    status: firstString([opportunity.status, root.status]),
-    assignedTo: firstString([opportunity.assignedTo, root.assignedTo]),
-    sourceRaw: firstString([opportunity.source, root.source]),
+    status: firstString([opportunity.status, customData.status, root.status]),
+    assignedTo: firstString([opportunity.assignedTo, customData.assignedTo, root.assignedTo]),
+    sourceRaw: firstString([opportunity.source, customData.source, root.source]),
     eventTimestamp: normalizeTimestamp(firstString([
       root.eventTimestamp,
+      customData.eventTimestamp,
       root.timestamp,
+      customData.timestamp,
       root.dateAdded,
+      customData.dateAdded,
       root.dateUpdated,
+      customData.dateUpdated,
       root.createdAt,
+      customData.createdAt,
+      root.created_at,
+      customData.created_at,
       root.updatedAt,
+      customData.updatedAt,
+      root.updated_at,
+      customData.updated_at,
       opportunity.lastStageChangeAt,
       opportunity.dateAdded,
       opportunity.dateUpdated,
@@ -321,7 +374,7 @@ export function parseGoHighLevelWebhook(event: IntegrationEventRecord): ParsedGo
       STAGE_EVENT_TYPES.has(eventKey) ||
       STATUS_EVENT_TYPES.has(eventKey) ||
       OPPORTUNITY_CREATE_EVENT_TYPES.has(eventKey),
-    testRunId: firstString([root.testRunId, opportunity.testRunId])
+    testRunId: firstString([root.testRunId, customData.testRunId, opportunity.testRunId])
   };
 }
 

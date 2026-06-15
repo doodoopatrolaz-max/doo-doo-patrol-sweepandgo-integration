@@ -33,4 +33,20 @@ describe("webhook fingerprinting", () => {
     assert.equal(extractEventId({ webhookId: 123 }), "123");
     assert.equal(extractEventType({ webhook_type: "job:completed" }), "job:completed");
   });
+
+  it("extracts HighLevel workflow metadata from customData", () => {
+    const payload = {
+      customData: {
+        event_type: "opportunity_created",
+        eventId: "evt_custom_data"
+      }
+    };
+
+    assert.equal(extractEventId(payload), "evt_custom_data");
+    assert.equal(extractEventType(payload), "opportunity_created");
+    assert.equal(
+      createEventFingerprint(payload, "gohighlevel"),
+      createEventFingerprint({ customData: { ...payload.customData } }, "gohighlevel")
+    );
+  });
 });

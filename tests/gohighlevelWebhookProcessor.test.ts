@@ -305,6 +305,116 @@ describe("GoHighLevel webhook processor", () => {
     assert.equal(parsed.externalOpportunityId, "opp_SANITIZED_NESTED");
     assert.equal(parsed.eventTimestamp, "2026-06-13T16:00:00.000Z");
   });
+
+  it("parses HighLevel workflow customData fields and falls back to received timestamp", () => {
+    const parsed = parseGoHighLevelWebhook(integrationEvent({
+      contact_id: "ct_SANITIZED_TOP_LEVEL",
+      pipeline_id: "pipe_TOP_LEVEL",
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_CUSTOM",
+        contact_id: "ct_SANITIZED_CUSTOM",
+        pipeline_id: "pipe_TARGET",
+        pipeline_stage_id: "stage_FACEBOOK"
+      }
+    }, "evt_11"));
+
+    assert.equal(parsed.eventType, "opportunity_created");
+    assert.equal(parsed.isOpportunityCreateEvent, true);
+    assert.equal(parsed.externalOpportunityId, "opp_SANITIZED_CUSTOM");
+    assert.equal(parsed.externalContactId, "ct_SANITIZED_TOP_LEVEL");
+    assert.equal(parsed.pipelineId, "pipe_TOP_LEVEL");
+    assert.equal(parsed.stageId, "stage_FACEBOOK");
+    assert.equal(parsed.eventTimestamp, "2026-06-13T12:00:00.000Z");
+  });
+
+  it("parses customData camelCase fields when snake_case is not provided", () => {
+    const parsed = parseGoHighLevelWebhook(integrationEvent({
+      customData: {
+        eventType: "opportunity_created",
+        opportunityId: "opp_SANITIZED_CAMEL",
+        contactId: "ct_SANITIZED_CAMEL",
+        pipelineId: "pipe_TARGET",
+        pipelineStageId: "stage_WEBSITE",
+        createdAt: "2026-06-13T18:00:00.000Z"
+      }
+    }, "evt_12"));
+
+    assert.equal(parsed.eventType, "opportunity_created");
+    assert.equal(parsed.externalOpportunityId, "opp_SANITIZED_CAMEL");
+    assert.equal(parsed.externalContactId, "ct_SANITIZED_CAMEL");
+    assert.equal(parsed.pipelineId, "pipe_TARGET");
+    assert.equal(parsed.stageId, "stage_WEBSITE");
+    assert.equal(parsed.eventTimestamp, "2026-06-13T18:00:00.000Z");
+  });
+
+  it("classifies opportunity_created events already in Facebook and website lead stages", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_CREATED_FACEBOOK",
+        contact_id: "ct_SANITIZED_CREATED_FACEBOOK",
+        pipeline_id: "pipe_TARGET",
+        pipeline_stage_id: "stage_FACEBOOK",
+        created_at: "2026-06-13T19:00:00.000Z"
+      }
+    }, "evt_13"));
+    await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_CREATED_WEBSITE",
+        contact_id: "ct_SANITIZED_CREATED_WEBSITE",
+        pipeline_id: "pipe_TARGET",
+        pipeline_stage_id: "stage_WEBSITE",
+        created_at: "2026-06-13T19:05:00.000Z"
+      }
+    }, "evt_14"));
+
+    assert.equal(store.opportunities.get("opp_SANITIZED_CREATED_FACEBOOK")?.originalLeadSource, "facebook");
+    assert.equal(store.opportunities.get("opp_SANITIZED_CREATED_FACEBOOK")?.originalLeadDate, "2026-06-13T19:00:00.000Z");
+    assert.equal(store.opportunities.get("opp_SANITIZED_CREATED_WEBSITE")?.originalLeadSource, "website");
+    assert.equal(store.opportunities.get("opp_SANITIZED_CREATED_WEBSITE")?.originalLeadDate, "2026-06-13T19:05:00.000Z");
+    assert.equal(store.stageHistory.length, 2);
+    assert.equal(store.stageHistory[0].source, "facebook");
+    assert.equal(store.stageHistory[1].source, "website");
+  });
+
+  it("does not double count duplicate opportunity_created events or later follow-up stages", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+    const createdPayload = {
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_CREATED_DUPLICATE",
+        contact_id: "ct_SANITIZED_CREATED_DUPLICATE",
+        pipeline_id: "pipe_TARGET",
+        pipeline_stage_id: "stage_FACEBOOK",
+        timestamp: "2026-06-13T20:00:00.000Z"
+      }
+    };
+
+    await processor.process(integrationEvent(createdPayload, "evt_15"));
+    await processor.process(integrationEvent(createdPayload, "evt_15_duplicate"));
+    await processor.process(integrationEvent({
+      event_type: "pipeline_stage_updated",
+      opportunityId: "opp_SANITIZED_CREATED_DUPLICATE",
+      contactId: "ct_SANITIZED_CREATED_DUPLICATE",
+      pipelineId: "pipe_TARGET",
+      pipelineStageId: "stage_FOLLOW_UP",
+      timestamp: "2026-06-13T21:00:00.000Z"
+    }, "evt_16"));
+
+    const opportunity = store.opportunities.get("opp_SANITIZED_CREATED_DUPLICATE");
+    assert.equal(store.opportunities.size, 1);
+    assert.equal(store.contacts.size, 1);
+    assert.equal(opportunity?.originalLeadSource, "facebook");
+    assert.equal(opportunity?.originalLeadDate, "2026-06-13T20:00:00.000Z");
+    assert.equal(opportunity?.stageId, "stage_FOLLOW_UP");
+    assert.equal(store.stageHistory.length, 2);
+  });
 });
 
 function resolveOriginalSource(

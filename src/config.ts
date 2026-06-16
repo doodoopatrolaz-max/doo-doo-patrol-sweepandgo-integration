@@ -34,6 +34,13 @@ export type AppConfig = {
   goHighLevelWebsiteStageName: string;
   gmailWebhookSecret?: string;
   metaAdsWebhookSecret?: string;
+  metaAccessToken?: string;
+  metaAdAccountId?: string;
+  metaApiVersion: string;
+  metaApiBaseUrl: string;
+  metaAppId?: string;
+  metaAppSecret?: string;
+  metaBusinessId?: string;
   googleAdsWebhookSecret?: string;
 };
 
@@ -104,6 +111,13 @@ export function loadConfig(): AppConfig {
     goHighLevelWebsiteStageName: optionalEnv("GHL_WEBSITE_STAGE_NAME") ?? optionalEnv("GOHIGHLEVEL_STAGE_WEBSITE_QUOTE_LEAD") ?? "Website Quote Lead",
     gmailWebhookSecret: optionalEnv("GMAIL_WEBHOOK_SECRET"),
     metaAdsWebhookSecret: optionalEnv("META_ADS_WEBHOOK_SECRET"),
+    metaAccessToken: optionalEnv("META_ACCESS_TOKEN"),
+    metaAdAccountId: optionalEnv("META_AD_ACCOUNT_ID") ?? optionalEnv("META_ADS_ACCOUNT_ID"),
+    metaApiVersion: requiredEnv("META_API_VERSION", "v23.0"),
+    metaApiBaseUrl: requiredEnv("META_API_BASE_URL", "https://graph.facebook.com").replace(/\/+$/, ""),
+    metaAppId: optionalEnv("META_APP_ID"),
+    metaAppSecret: optionalEnv("META_APP_SECRET"),
+    metaBusinessId: optionalEnv("META_BUSINESS_ID"),
     googleAdsWebhookSecret: optionalEnv("GOOGLE_ADS_WEBHOOK_SECRET")
   };
 }

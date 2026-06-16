@@ -59,7 +59,13 @@ Do not commit real values. Use Railway variables for production secrets.
 
 | Variable | Purpose | Phase | Notes |
 | --- | --- | --- | --- |
-| `META_ADS_ACCOUNT_ID` | Meta Ads account ID | Later | Confirm before use. |
+| `META_ACCESS_TOKEN` | Meta Marketing API access token | 5 | Store only in Railway. Prefer a Meta Business system user token with read-only ad account access. Never commit or paste into chat. |
+| `META_AD_ACCOUNT_ID` | Meta Ads account ID | 5 | Use the Doo Doo Patrol ad account ID. The app accepts with or without the `act_` prefix. |
+| `META_API_VERSION` | Meta Graph API version | 5 | Confirm current supported Marketing API version in official Meta docs before live use. Placeholder: `v23.0`. |
+| `META_API_BASE_URL` | Meta Graph API base URL | 5 | Placeholder: `https://graph.facebook.com`. |
+| `META_APP_ID` | Meta app ID | Optional | Needed only if token management later requires app metadata. Do not store secrets in docs. |
+| `META_APP_SECRET` | Meta app secret | Optional secret | Store only in Railway if needed later. Not required for the Phase 5 read-only foundation. |
+| `META_BUSINESS_ID` | Meta Business ID | Optional | Useful for system-user setup notes; not required by current read-only sync. |
 | `GOOGLE_ADS_CUSTOMER_ID` | Google Ads customer ID | Later | Confirm before use. |
 | `GOOGLE_ADS_MANAGER_CUSTOMER_ID` | Optional manager customer ID | Later | Confirm account structure before use. |
 

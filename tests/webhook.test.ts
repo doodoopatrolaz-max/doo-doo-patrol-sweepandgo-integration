@@ -27,6 +27,13 @@ const config: AppConfig = {
   goHighLevelWebhookSecret: undefined,
   gmailWebhookSecret: undefined,
   metaAdsWebhookSecret: undefined,
+  metaAccessToken: undefined,
+  metaAdAccountId: undefined,
+  metaApiVersion: "v23.0",
+  metaApiBaseUrl: "https://graph.facebook.com",
+  metaAppId: undefined,
+  metaAppSecret: undefined,
+  metaBusinessId: undefined,
   googleAdsWebhookSecret: undefined
 };
 

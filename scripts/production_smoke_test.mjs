@@ -4,6 +4,7 @@ import { loadConfig } from "../src/config.ts";
 import { createRequestHandler } from "../src/http/app.ts";
 import { InMemoryWebhookEventStore } from "../src/webhooks/inMemoryStore.ts";
 import { GoHighLevelClient } from "../src/gohighlevel/client.ts";
+import { MetaAdsClient } from "../src/metaAds/client.ts";
 
 const requiredVariableNames = [
   "NODE_ENV",
@@ -23,12 +24,23 @@ const optionalGoHighLevelVariableNames = [
   "GOHIGHLEVEL_WEBHOOK_SECRET"
 ];
 
+const optionalMetaVariableNames = [
+  "META_ACCESS_TOKEN",
+  "META_AD_ACCOUNT_ID",
+  "META_API_VERSION",
+  "META_API_BASE_URL",
+  "META_APP_ID",
+  "META_APP_SECRET",
+  "META_BUSINESS_ID"
+];
+
 const config = loadConfig();
 const output = {
   applicationHealth: await checkHealth(config),
   database: await checkDatabase(config.databaseUrl),
   requiredEnvironmentVariables: Object.fromEntries(requiredVariableNames.map((name) => [name, Boolean(process.env[name])])),
   goHighLevelEnvironmentVariables: Object.fromEntries(optionalGoHighLevelVariableNames.map((name) => [name, Boolean(process.env[name])])),
+  metaAdsEnvironmentVariables: Object.fromEntries(optionalMetaVariableNames.map((name) => [name, Boolean(process.env[name])])),
   sweepAndGoModulesPresent: {
     incrementalDailySync: fs.existsSync("src/sweepandgo/incrementalDailySync.ts"),
     sync: fs.existsSync("src/sweepandgo/sync.ts"),
@@ -36,12 +48,13 @@ const output = {
     reportingMapper: fs.existsSync("src/sweepandgo/reportingMapper.ts"),
     reportingStore: fs.existsSync("src/sweepandgo/reportingStore.ts")
   },
-  goHighLevelModuleLoads: typeof GoHighLevelClient === "function"
+  goHighLevelModuleLoads: typeof GoHighLevelClient === "function",
+  metaAdsModuleLoads: typeof MetaAdsClient === "function"
 };
 
 console.log(JSON.stringify(output, null, 2));
 
-if (!output.applicationHealth.ok || output.database.status === "failed" || !output.goHighLevelModuleLoads) {
+if (!output.applicationHealth.ok || output.database.status === "failed" || !output.goHighLevelModuleLoads || !output.metaAdsModuleLoads) {
   process.exit(1);
 }
 

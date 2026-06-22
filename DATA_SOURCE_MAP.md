@@ -15,7 +15,7 @@
 | One-time cleanups | Sweep&Go | GoHighLevel if the customer never converted | Confirm exact Sweep&Go fields before implementing. |
 | Cancellations | Sweep&Go | Gmail or GoHighLevel cancellation workflows | Store raw and normalized cancellation reason. |
 | Facebook/Instagram ad spend | Meta Ads | None | Meta Ads is the source of truth. Use read-only access. |
-| Google ad spend | Google Ads | None | Google Ads is the source of truth. Use read-only access. |
+| Google ad spend | Google Ads | None | Google Ads is the source of truth. Use read-only access. Google-reported conversions stay separate from GoHighLevel Website quote leads. |
 | Daily business metrics | Reporting database | Rebuilt from source tables | Store computed metrics for fast reporting and auditability. |
 
 ## Confirmed Configuration Values

@@ -97,6 +97,8 @@ No working Sweep&Go integration code should be deleted or replaced during the BI
 - Add read-only Google Ads reporting sync after confirming customer IDs and manager-account structure.
 - Store daily spend and performance in `daily_ad_performance`.
 - Keep ad spend source of truth in the ad platforms, not CRM tags.
+- Run campaign-level Google Ads daily sync first with `--max-pages=1` before any historical backfill.
+- Keep Google Ads conversions separate from GoHighLevel Website leads until reporting intentionally combines them.
 
 ## Phase 6: Reporting and Reconciliation
 

@@ -5,6 +5,7 @@ import { createRequestHandler } from "../src/http/app.ts";
 import { InMemoryWebhookEventStore } from "../src/webhooks/inMemoryStore.ts";
 import { GoHighLevelClient } from "../src/gohighlevel/client.ts";
 import { MetaAdsClient } from "../src/metaAds/client.ts";
+import { GoogleAdsClient } from "../src/googleAds/client.ts";
 
 const requiredVariableNames = [
   "NODE_ENV",
@@ -34,6 +35,18 @@ const optionalMetaVariableNames = [
   "META_BUSINESS_ID"
 ];
 
+const optionalGoogleAdsVariableNames = [
+  "GOOGLE_ADS_DEVELOPER_TOKEN",
+  "GOOGLE_ADS_CUSTOMER_ID",
+  "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+  "GOOGLE_ADS_CLIENT_ID",
+  "GOOGLE_ADS_CLIENT_SECRET",
+  "GOOGLE_ADS_REFRESH_TOKEN",
+  "GOOGLE_ADS_API_VERSION",
+  "GOOGLE_ADS_API_BASE_URL",
+  "GOOGLE_ADS_OAUTH_TOKEN_URL"
+];
+
 const config = loadConfig();
 const output = {
   applicationHealth: await checkHealth(config),
@@ -41,6 +54,7 @@ const output = {
   requiredEnvironmentVariables: Object.fromEntries(requiredVariableNames.map((name) => [name, Boolean(process.env[name])])),
   goHighLevelEnvironmentVariables: Object.fromEntries(optionalGoHighLevelVariableNames.map((name) => [name, Boolean(process.env[name])])),
   metaAdsEnvironmentVariables: Object.fromEntries(optionalMetaVariableNames.map((name) => [name, Boolean(process.env[name])])),
+  googleAdsEnvironmentVariables: Object.fromEntries(optionalGoogleAdsVariableNames.map((name) => [name, Boolean(process.env[name])])),
   sweepAndGoModulesPresent: {
     incrementalDailySync: fs.existsSync("src/sweepandgo/incrementalDailySync.ts"),
     sync: fs.existsSync("src/sweepandgo/sync.ts"),
@@ -49,12 +63,13 @@ const output = {
     reportingStore: fs.existsSync("src/sweepandgo/reportingStore.ts")
   },
   goHighLevelModuleLoads: typeof GoHighLevelClient === "function",
-  metaAdsModuleLoads: typeof MetaAdsClient === "function"
+  metaAdsModuleLoads: typeof MetaAdsClient === "function",
+  googleAdsModuleLoads: typeof GoogleAdsClient === "function"
 };
 
 console.log(JSON.stringify(output, null, 2));
 
-if (!output.applicationHealth.ok || output.database.status === "failed" || !output.goHighLevelModuleLoads || !output.metaAdsModuleLoads) {
+if (!output.applicationHealth.ok || output.database.status === "failed" || !output.goHighLevelModuleLoads || !output.metaAdsModuleLoads || !output.googleAdsModuleLoads) {
   process.exit(1);
 }
 

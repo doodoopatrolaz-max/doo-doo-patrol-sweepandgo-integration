@@ -66,8 +66,16 @@ Do not commit real values. Use Railway variables for production secrets.
 | `META_APP_ID` | Meta app ID | Optional | Needed only if token management later requires app metadata. Do not store secrets in docs. |
 | `META_APP_SECRET` | Meta app secret | Optional secret | Store only in Railway if needed later. Not required for the Phase 5 read-only foundation. |
 | `META_BUSINESS_ID` | Meta Business ID | Optional | Useful for system-user setup notes; not required by current read-only sync. |
-| `GOOGLE_ADS_CUSTOMER_ID` | Google Ads customer ID | Later | Confirm before use. |
-| `GOOGLE_ADS_MANAGER_CUSTOMER_ID` | Optional manager customer ID | Later | Confirm account structure before use. |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | Google Ads API developer token | 6 | Store only in Railway. Required for Google Ads API calls. Do not paste into docs, logs, GitHub, or chat. |
+| `GOOGLE_ADS_CUSTOMER_ID` | Google Ads customer ID | 6 | The operating Google Ads customer account to report on. Use with or without hyphens; the app normalizes before API calls. |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | Optional manager customer ID | 6 | Required only when OAuth access goes through a manager account. Use without exposing the value in logs. |
+| `GOOGLE_ADS_MANAGER_CUSTOMER_ID` | Legacy alias for optional manager customer ID | 6 | Supported as a fallback alias, but prefer `GOOGLE_ADS_LOGIN_CUSTOMER_ID`. |
+| `GOOGLE_ADS_CLIENT_ID` | OAuth client ID | 6 | Store only in Railway. Required to refresh access tokens. |
+| `GOOGLE_ADS_CLIENT_SECRET` | OAuth client secret | 6 secret | Store only in Railway. Never commit. |
+| `GOOGLE_ADS_REFRESH_TOKEN` | OAuth refresh token | 6 secret | Store only in Railway. Used to obtain short-lived access tokens; never commit or print. |
+| `GOOGLE_ADS_API_VERSION` | Google Ads API version | 6 | Current placeholder: `v24`. Confirm against official Google Ads API release notes before live activation. |
+| `GOOGLE_ADS_API_BASE_URL` | Google Ads API base URL | 6 | Placeholder: `https://googleads.googleapis.com`. |
+| `GOOGLE_ADS_OAUTH_TOKEN_URL` | Google OAuth token endpoint | 6 | Placeholder: `https://oauth2.googleapis.com/token`. |
 
 ## Gmail Reconciliation
 

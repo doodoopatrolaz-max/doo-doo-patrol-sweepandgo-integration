@@ -42,6 +42,15 @@ export type AppConfig = {
   metaAppSecret?: string;
   metaBusinessId?: string;
   googleAdsWebhookSecret?: string;
+  googleAdsDeveloperToken?: string;
+  googleAdsCustomerId?: string;
+  googleAdsLoginCustomerId?: string;
+  googleAdsClientId?: string;
+  googleAdsClientSecret?: string;
+  googleAdsRefreshToken?: string;
+  googleAdsApiVersion: string;
+  googleAdsApiBaseUrl: string;
+  googleAdsOAuthTokenUrl: string;
 };
 
 function optionalEnv(name: string): string | undefined {
@@ -118,7 +127,16 @@ export function loadConfig(): AppConfig {
     metaAppId: optionalEnv("META_APP_ID"),
     metaAppSecret: optionalEnv("META_APP_SECRET"),
     metaBusinessId: optionalEnv("META_BUSINESS_ID"),
-    googleAdsWebhookSecret: optionalEnv("GOOGLE_ADS_WEBHOOK_SECRET")
+    googleAdsWebhookSecret: optionalEnv("GOOGLE_ADS_WEBHOOK_SECRET"),
+    googleAdsDeveloperToken: optionalEnv("GOOGLE_ADS_DEVELOPER_TOKEN"),
+    googleAdsCustomerId: optionalEnv("GOOGLE_ADS_CUSTOMER_ID"),
+    googleAdsLoginCustomerId: optionalEnv("GOOGLE_ADS_LOGIN_CUSTOMER_ID") ?? optionalEnv("GOOGLE_ADS_MANAGER_CUSTOMER_ID"),
+    googleAdsClientId: optionalEnv("GOOGLE_ADS_CLIENT_ID"),
+    googleAdsClientSecret: optionalEnv("GOOGLE_ADS_CLIENT_SECRET"),
+    googleAdsRefreshToken: optionalEnv("GOOGLE_ADS_REFRESH_TOKEN"),
+    googleAdsApiVersion: requiredEnv("GOOGLE_ADS_API_VERSION", "v24"),
+    googleAdsApiBaseUrl: requiredEnv("GOOGLE_ADS_API_BASE_URL", "https://googleads.googleapis.com").replace(/\/+$/, ""),
+    googleAdsOAuthTokenUrl: requiredEnv("GOOGLE_ADS_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
   };
 }
 

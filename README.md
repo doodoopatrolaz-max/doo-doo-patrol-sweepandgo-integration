@@ -140,6 +140,23 @@ The synthetic test uses fake IDs only and reports aggregate counts. It does not 
 
 HighLevel activation is not complete until the selected HighLevel webhook method is confirmed in the UI. Official HighLevel Marketplace documentation confirms webhook URL configuration and workflow triggers such as `Pipeline Stage Changed` and `Opportunity Status Changed`; the reviewed official docs did not confirm a standard signing header or timestamp replay-validation mechanism for standard CRM/workflow webhook deliveries.
 
+## Google Ads Reporting Foundation
+
+Phase 6 adds a read-only Google Ads spend and campaign performance foundation. Gmail is not connected in this phase, and the Google Ads module does not create, update, or delete campaigns, ads, keywords, budgets, bidding settings, conversions, billing settings, audiences, assets, recommendations, or account settings.
+
+Documentation and unanswered setup questions live in `GOOGLE_ADS_FIELD_MAP.md`.
+
+Available read-only commands:
+
+```bash
+npm run discover:google:account
+npm run discover:google:performance -- --date=YYYY-MM-DD --max-pages=1
+npm run sync:google:daily -- --date=YYYY-MM-DD --max-pages=1
+npm run sync:google:backfill
+```
+
+The account discovery, performance discovery, and daily sync commands skip safely until the Google Ads developer token, customer ID, OAuth client ID, OAuth client secret, and refresh token are configured in Railway. The backfill command is intentionally a placeholder until limited daily sync is verified.
+
 ---
 
 # Preserved Sweep&Go Integration Notes

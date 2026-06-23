@@ -36,6 +36,30 @@ class FakePool {
   }
 }
 
+class SyncHealthPool {
+  async query(sql: string) {
+    if (sql.includes("FROM sync_runs")) {
+      return {
+        rows: [{
+          provider: "sweepandgo",
+          status: "completed",
+          started_at: "2000-01-01T00:00:00.000Z",
+          completed_at: "2000-01-01T00:01:00.000Z",
+          records_read: 60,
+          records_written: 60
+        }]
+      };
+    }
+    if (sql.includes("FROM integration_events")) {
+      return { rows: [{ provider: "sweepandgo", recent_events: 0, failed_events: 0 }] };
+    }
+    if (sql.includes("FROM reconciliation_issues")) {
+      return { rows: [{ open_reconciliation_issues: 0 }] };
+    }
+    return { rows: [] };
+  }
+}
+
 const summaryOnlyDataSource: DashboardDataSource = {
   async getSummary(range) {
     return {
@@ -133,6 +157,15 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalLeads, 0);
     assert.equal(summary.costPerLead, null);
     assert(summary.dataNotes.some((note) => note.includes("No database")));
+  });
+
+  it("flags stale Sweep&Go sync runs in sync health", async () => {
+    const service = new PostgresDashboardDataSource(new SyncHealthPool());
+    const syncHealth = await service.getSyncHealth(parseDashboardDateRange({ range: "today" }));
+
+    assert.equal(syncHealth.rows[0]?.provider, "sweepandgo");
+    assert.equal(syncHealth.rows[0]?.isStale, true);
+    assert(syncHealth.rows[0]?.staleWarning?.includes("older than 24 hours"));
   });
 });
 

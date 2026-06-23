@@ -230,6 +230,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       rows: syncRows.rows.map((row) => {
         const provider = stringValue(row.provider) || "unknown";
         const events = eventsByProvider.get(provider) ?? {};
+        const staleWarning = syncStaleWarning(provider, row.started_at);
         return {
           provider,
           latestStatus: stringValue(row.status) || "unknown",
@@ -239,7 +240,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
           recordsWritten: integerValue(row.records_written),
           recentEvents: integerValue(events.recent_events),
           failedEvents: integerValue(events.failed_events),
-          openReconciliationIssues: openIssues
+          openReconciliationIssues: openIssues,
+          isStale: Boolean(staleWarning),
+          staleWarning
         };
       })
     };
@@ -418,6 +421,35 @@ function isoString(value: unknown): string | undefined {
     return value.toISOString();
   }
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function syncStaleWarning(provider: string, startedAt: unknown): string | undefined {
+  if (provider !== "sweepandgo") {
+    return undefined;
+  }
+
+  const startedAtDate = dateValue(startedAt);
+  if (!startedAtDate) {
+    return "Sweep&Go customer sync has never run. Customer KPIs may be stale.";
+  }
+
+  const ageMs = Date.now() - startedAtDate.getTime();
+  if (ageMs > 24 * 60 * 60 * 1000) {
+    return "Sweep&Go customer sync is older than 24 hours. Customer KPIs may be stale.";
+  }
+
+  return undefined;
+}
+
+function dateValue(value: unknown): Date | undefined {
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 function roundMoney(value: number): number {

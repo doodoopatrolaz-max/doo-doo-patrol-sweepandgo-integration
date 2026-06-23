@@ -68,6 +68,8 @@ export type DashboardSyncHealthRow = {
   recentEvents: number;
   failedEvents: number;
   openReconciliationIssues: number;
+  isStale: boolean;
+  staleWarning?: string;
 };
 
 export type DashboardSyncHealth = {

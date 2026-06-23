@@ -189,16 +189,25 @@ function renderSources(sources: DashboardSources): string {
 }
 
 function renderSyncHealth(syncHealth: DashboardSyncHealth): string {
+  const staleWarnings = syncHealth.rows
+    .map((row) => row.staleWarning)
+    .filter((warning): warning is string => Boolean(warning));
+
   return `
     <section>
       <h2>Sync Health</h2>
+      ${staleWarnings.length ? `
+        <div class="warning">
+          ${staleWarnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}
+        </div>
+      ` : ""}
       <table>
         <thead>
           <tr><th>Provider</th><th>Status</th><th>Last started</th><th>Read</th><th>Written</th><th>Recent events</th><th>Failed events</th><th>Open issues</th></tr>
         </thead>
         <tbody>
           ${syncHealth.rows.length ? syncHealth.rows.map((row) => `
-            <tr>
+            <tr class="${row.isStale ? "stale-sync" : ""}">
               <td>${escapeHtml(title(row.provider))}</td>
               <td>${escapeHtml(row.latestStatus)}</td>
               <td>${escapeHtml(row.lastStartedAt ?? "No data")}</td>
@@ -273,6 +282,9 @@ function pageShell(input: { title: string; body: string }): string {
     .login-panel h1 { color:var(--navy); }
     .login-form { display:grid; gap:12px; margin-top:18px; }
     .notice { display:grid; gap:8px; margin-top:16px; padding:14px; border-radius:8px; background:var(--soft); }
+    .warning { margin:0 0 14px; padding:12px 14px; border-radius:8px; border:1px solid #f4bf50; background:#fff8e6; color:#6f4800; font-weight:800; }
+    .warning p { margin:4px 0; }
+    .stale-sync td { background:#fffaf0; }
     .error { color:#b42318; font-weight:800; margin:0; }
     code { background:var(--soft); padding:2px 5px; border-radius:5px; }
     @media (max-width: 850px) { .topbar { align-items:flex-start; flex-direction:column; } .cards, .grid-two { grid-template-columns:1fr; } .bar-row { grid-template-columns:48px 1fr 64px; } }

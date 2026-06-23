@@ -55,7 +55,7 @@ export function createRequestHandler(options: CreateAppOptions) {
           sweepandgoApiConfigured: Boolean(options.config.sweepgoApiToken),
           databaseConfigured: Boolean(options.config.databaseUrl),
           dailyDashboardEnabled: options.config.dailyDashboardEnabled,
-          dailyDashboardRecipient: options.config.dailyDashboardRecipient,
+          dailyDashboardRecipientConfigured: Boolean(options.config.dailyDashboardRecipient),
           dailyDashboardEmailConfigured: Boolean(options.config.smtpHost && options.config.dailyDashboardFrom),
           kpiDashboardConfigured: Boolean(options.config.dashboardPassword),
           placeholderWebhooks: {

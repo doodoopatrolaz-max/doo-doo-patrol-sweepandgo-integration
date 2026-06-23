@@ -135,7 +135,7 @@ export class SweepAndGoWebhookBiProcessor implements WebhookProcessor {
         };
       }
 
-      await this.upsertCustomerWithoutNewRecurringDate(parsed, event, status);
+      await this.upsertCustomerWithoutNewRecurringDate(parsed, event, status, "overwrite");
       return { status: "processed", action: "updated_customer_status" };
     }
 
@@ -172,11 +172,13 @@ export class SweepAndGoWebhookBiProcessor implements WebhookProcessor {
   private async upsertCustomerWithoutNewRecurringDate(
     parsed: ParsedSweepAndGoWebhook,
     event: WebhookEvent,
-    status?: string
+    status?: string,
+    statusUpdateMode: "fill" | "overwrite" = "fill"
   ): Promise<ExistingSweepAndGoCustomer> {
     return await this.store.upsertCustomer({
       externalCustomerId: parsed.externalCustomerId!,
       status: status ?? normalizeSweepAndGoStatus(parsed.status ?? parsed.state),
+      statusUpdateMode,
       source: parsed.source,
       sourceRaw: parsed.sourceRaw,
       metadata: eventMetadata(parsed, event, {

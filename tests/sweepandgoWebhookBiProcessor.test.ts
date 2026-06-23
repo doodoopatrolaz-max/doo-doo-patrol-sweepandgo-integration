@@ -23,10 +23,13 @@ class InMemoryBiStore implements SweepAndGoWebhookBiStore {
 
   async upsertCustomer(input: SweepAndGoCustomerUpsertInput) {
     const existing = this.customers.get(input.externalCustomerId);
+    const status = input.statusUpdateMode === "overwrite" || !existing || existing.status === "unknown"
+      ? input.status ?? existing?.status ?? "unknown"
+      : existing.status;
     const customer = {
       id: existing?.id ?? `customer-${this.customers.size + 1}`,
       externalSweepGoId: input.externalCustomerId,
-      status: input.status ?? existing?.status ?? "unknown",
+      status,
       source: existing?.source === "unknown" ? input.source : existing?.source ?? input.source,
       firstRecurringDate: existing?.firstRecurringDate ?? input.firstRecurringDate,
       metadata: { ...(existing?.metadata ?? {}), ...input.metadata }
@@ -170,6 +173,25 @@ describe("Sweep&Go webhook BI processor", () => {
     assert.equal(customer?.status, "inactive");
     assert.equal(customer?.firstRecurringDate, undefined);
     assert.equal(store.cancellations.size, 0);
+  });
+
+  it("does not let onboarding overwrite a later explicit inactive status", async () => {
+    const store = new InMemoryBiStore();
+    const processor = new SweepAndGoWebhookBiProcessor(store);
+
+    await processor.process(webhook({
+      eventType: "client:changed_status",
+      payload: { data: { client: "client-1", status: "inactive" } },
+      fingerprint: "status"
+    }));
+    await processor.process(webhook({
+      eventType: "client:client_onboarding_recurring",
+      payload: { data: { client: "client-1", status: "active" } },
+      fingerprint: "onboarding"
+    }));
+
+    assert.equal(store.customers.get("client-1")?.status, "inactive");
+    assert.equal(store.customers.get("client-1")?.firstRecurringDate, "2026-06-22");
   });
 
   it("acknowledges client_assigned without affecting customer KPIs", async () => {

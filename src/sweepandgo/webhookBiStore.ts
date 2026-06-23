@@ -11,6 +11,7 @@ export type ExistingSweepAndGoCustomer = {
 export type SweepAndGoCustomerUpsertInput = {
   externalCustomerId: string;
   status?: string;
+  statusUpdateMode?: "fill" | "overwrite";
   source: NormalizedCustomerSource;
   sourceRaw?: string;
   firstRecurringDate?: string;
@@ -99,7 +100,11 @@ export class PostgresSweepAndGoWebhookBiStore implements SweepAndGoWebhookBiStor
       )
       VALUES ($1, $2, $3, $4, $5, $6::date, $7::jsonb)
       ON CONFLICT (external_sweepgo_id)
-      DO UPDATE SET status = COALESCE(EXCLUDED.status, customers.status),
+      DO UPDATE SET status = CASE
+                      WHEN $8 = 'overwrite' THEN COALESCE(EXCLUDED.status, customers.status)
+                      WHEN customers.status IS NULL OR customers.status = 'unknown' THEN COALESCE(EXCLUDED.status, customers.status)
+                      ELSE customers.status
+                    END,
                     source = CASE
                       WHEN customers.source = 'unknown' AND EXCLUDED.source <> 'unknown' THEN EXCLUDED.source
                       ELSE customers.source
@@ -119,7 +124,8 @@ export class PostgresSweepAndGoWebhookBiStore implements SweepAndGoWebhookBiStor
         input.source,
         input.sourceRaw ?? null,
         input.firstRecurringDate ?? null,
-        JSON.stringify(input.metadata)
+        JSON.stringify(input.metadata),
+        input.statusUpdateMode ?? "fill"
       ]
     );
 

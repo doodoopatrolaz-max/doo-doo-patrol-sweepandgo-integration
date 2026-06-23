@@ -1,5 +1,6 @@
 import http from "node:http";
 import { loadConfig } from "./config.ts";
+import { EmptyDashboardDataSource, PostgresDashboardDataSource } from "./dashboard/service.ts";
 import { createPool } from "./db/pool.ts";
 import { createRequestHandler } from "./http/app.ts";
 import { logger } from "./logger.ts";
@@ -30,6 +31,9 @@ const webhookProcessor = new OnboardingWebhookProcessor(onboardingStore, sweepan
 const goHighLevelWebhookProcessor = pool
   ? new GoHighLevelWebhookProcessor(new PostgresGoHighLevelWebhookStore(pool), config)
   : undefined;
+const dashboardDataSource = pool
+  ? new PostgresDashboardDataSource(pool)
+  : new EmptyDashboardDataSource();
 
 if (!config.databaseUrl) {
   logger.warn("DATABASE_URL is not configured; using temporary in-memory webhook storage");
@@ -38,6 +42,7 @@ const app = createRequestHandler({
   config,
   webhookStore,
   integrationEventStore,
+  dashboardDataSource,
   webhookProcessor,
   integrationEventProcessor: goHighLevelWebhookProcessor
 });

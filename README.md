@@ -157,6 +157,57 @@ npm run sync:google:backfill
 
 The account discovery, performance discovery, and daily sync commands skip safely until the Google Ads developer token, customer ID, OAuth client ID, OAuth client secret, and refresh token are configured in Railway. The backfill command is intentionally a placeholder until limited daily sync is verified.
 
+## Private KPI Dashboard
+
+Phase 7 adds a private internal KPI dashboard at:
+
+```text
+/dashboard
+```
+
+The dashboard is password-gated. Set this Railway variable before using it:
+
+```text
+DASHBOARD_PASSWORD
+```
+
+Do not commit the real password or paste it into chat. If `DASHBOARD_PASSWORD` is missing, `/dashboard` shows a safe setup message and the dashboard APIs return a setup error instead of exposing data.
+
+Protected API routes:
+
+```text
+/api/dashboard/summary
+/api/dashboard/trends
+/api/dashboard/sources
+/api/dashboard/sync-health
+```
+
+Included metrics:
+
+- Total ad spend, Meta spend, and Google spend when available.
+- Facebook leads, Website leads, other leads, and total leads from GoHighLevel opportunities.
+- New recurring customers and estimated MRR added from Sweep&Go customer data when pricing is available.
+- Cancellations and net recurring customer growth.
+- Cost per lead and cost per new recurring customer when enough data exists.
+- Ad spend and lead trends by day.
+- Lead source performance.
+- Provider-level campaign performance totals without campaign names.
+- Unmatched lead count and sync health.
+
+Deferred metrics:
+
+- Close rate and cost per closed recurring customer until safe lead-to-customer matching is complete.
+- Google spend until Google Ads read access is approved and daily sync is verified.
+- Exact MRR added when Sweep&Go pricing fields are missing or unconfirmed.
+- Customer-level tables with private contact data.
+
+Troubleshooting:
+
+- If the dashboard says setup is needed, confirm `DASHBOARD_PASSWORD` is set in Railway and redeploy completed.
+- If a card says `No data`, confirm the selected date range has source data in Postgres.
+- If Google spend says `Not connected yet`, wait for Google Ads API access approval and rerun the limited Google sync.
+- Keep the route private. Do not share the dashboard URL or password outside internal Doo Doo Patrol operations.
+
 ---
 
 # Preserved Sweep&Go Integration Notes

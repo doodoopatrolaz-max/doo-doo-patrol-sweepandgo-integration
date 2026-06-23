@@ -47,6 +47,10 @@ const optionalGoogleAdsVariableNames = [
   "GOOGLE_ADS_OAUTH_TOKEN_URL"
 ];
 
+const optionalDashboardVariableNames = [
+  "DASHBOARD_PASSWORD"
+];
+
 const config = loadConfig();
 const output = {
   applicationHealth: await checkHealth(config),
@@ -55,6 +59,7 @@ const output = {
   goHighLevelEnvironmentVariables: Object.fromEntries(optionalGoHighLevelVariableNames.map((name) => [name, Boolean(process.env[name])])),
   metaAdsEnvironmentVariables: Object.fromEntries(optionalMetaVariableNames.map((name) => [name, Boolean(process.env[name])])),
   googleAdsEnvironmentVariables: Object.fromEntries(optionalGoogleAdsVariableNames.map((name) => [name, Boolean(process.env[name])])),
+  dashboardEnvironmentVariables: Object.fromEntries(optionalDashboardVariableNames.map((name) => [name, Boolean(process.env[name])])),
   sweepAndGoModulesPresent: {
     incrementalDailySync: fs.existsSync("src/sweepandgo/incrementalDailySync.ts"),
     sync: fs.existsSync("src/sweepandgo/sync.ts"),

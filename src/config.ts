@@ -51,6 +51,7 @@ export type AppConfig = {
   googleAdsApiVersion: string;
   googleAdsApiBaseUrl: string;
   googleAdsOAuthTokenUrl: string;
+  dashboardPassword?: string;
 };
 
 function optionalEnv(name: string): string | undefined {
@@ -136,7 +137,8 @@ export function loadConfig(): AppConfig {
     googleAdsRefreshToken: optionalEnv("GOOGLE_ADS_REFRESH_TOKEN"),
     googleAdsApiVersion: requiredEnv("GOOGLE_ADS_API_VERSION", "v24"),
     googleAdsApiBaseUrl: requiredEnv("GOOGLE_ADS_API_BASE_URL", "https://googleads.googleapis.com").replace(/\/+$/, ""),
-    googleAdsOAuthTokenUrl: requiredEnv("GOOGLE_ADS_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
+    googleAdsOAuthTokenUrl: requiredEnv("GOOGLE_ADS_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+    dashboardPassword: optionalEnv("DASHBOARD_PASSWORD")
   };
 }
 

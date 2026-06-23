@@ -77,6 +77,12 @@ Do not commit real values. Use Railway variables for production secrets.
 | `GOOGLE_ADS_API_BASE_URL` | Google Ads API base URL | 6 | Placeholder: `https://googleads.googleapis.com`. |
 | `GOOGLE_ADS_OAUTH_TOKEN_URL` | Google OAuth token endpoint | 6 | Placeholder: `https://oauth2.googleapis.com/token`. |
 
+## Private KPI Dashboard
+
+| Variable | Purpose | Phase | Notes |
+| --- | --- | --- | --- |
+| `DASHBOARD_PASSWORD` | Password gate for `/dashboard` and `/api/dashboard/*` | 7 secret | Required before the dashboard shows data. Store only in Railway or a private local env file. Never commit or paste into chat. |
+
 ## Gmail Reconciliation
 
 | Variable | Purpose | Phase | Notes |

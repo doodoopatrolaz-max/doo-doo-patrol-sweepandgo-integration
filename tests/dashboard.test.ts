@@ -50,7 +50,7 @@ class SyncHealthPool {
         }]
       };
     }
-    if (sql.includes("FROM integration_events")) {
+    if (sql.includes("FROM unified_webhook_events")) {
       return { rows: [{ provider: "sweepandgo", recent_events: 0, failed_events: 0 }] };
     }
     if (sql.includes("FROM reconciliation_issues")) {

@@ -58,7 +58,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         googleSpend: adSpend.google,
         totalLeads,
         newRecurringCustomers,
-        estimatedMrrAdded
+        estimatedMrrAdded,
+        sweepAndGoLiveWebhookProcessingActive: true
       })
     };
   }
@@ -211,7 +212,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         `SELECT provider,
                 COUNT(*)::int AS recent_events,
                 COUNT(*) FILTER (WHERE processing_status = 'failed')::int AS failed_events
-         FROM integration_events
+         FROM unified_webhook_events
          WHERE received_at::date BETWEEN $1::date AND $2::date
          GROUP BY provider`,
         [range.startDate, range.endDate]
@@ -384,8 +385,12 @@ function dataNotes(input: {
   totalLeads: number;
   newRecurringCustomers: number;
   estimatedMrrAdded: number | null;
+  sweepAndGoLiveWebhookProcessingActive?: boolean;
 }): string[] {
   const notes: string[] = [];
+  if (input.sweepAndGoLiveWebhookProcessingActive) {
+    notes.push("Sweep&Go live webhook processing is active for safe customer status, subscription, and cancellation signals.");
+  }
   if (input.googleSpend === 0) {
     notes.push("Google Ads live reads are not connected yet or have no spend for this range.");
   }

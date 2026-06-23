@@ -9,8 +9,11 @@ import { OnboardingWebhookProcessor } from "./onboarding/intake.ts";
 import { PostgresOnboardingIntakeStore } from "./onboarding/postgresStore.ts";
 import { startDailyDashboardScheduler } from "./reports/scheduler.ts";
 import { SweepAndGoClient } from "./sweepandgo/client.ts";
+import { SweepAndGoWebhookBiProcessor } from "./sweepandgo/webhookBiProcessor.ts";
+import { PostgresSweepAndGoWebhookBiStore } from "./sweepandgo/webhookBiStore.ts";
 import { GoHighLevelWebhookProcessor } from "./gohighlevel/webhookProcessor.ts";
 import { PostgresGoHighLevelWebhookStore } from "./gohighlevel/store.ts";
+import { CompositeWebhookProcessor } from "./webhooks/compositeProcessor.ts";
 import { InMemoryWebhookEventStore } from "./webhooks/inMemoryStore.ts";
 import {
   InMemoryIntegrationEventStore,
@@ -27,7 +30,13 @@ const integrationEventStore = pool
   : new InMemoryIntegrationEventStore();
 const onboardingStore = pool ? new PostgresOnboardingIntakeStore(pool) : new InMemoryOnboardingIntakeStore();
 const sweepandgoClient = new SweepAndGoClient(config);
-const webhookProcessor = new OnboardingWebhookProcessor(onboardingStore, sweepandgoClient);
+const onboardingWebhookProcessor = new OnboardingWebhookProcessor(onboardingStore, sweepandgoClient);
+const webhookProcessor = pool
+  ? new CompositeWebhookProcessor([
+      onboardingWebhookProcessor,
+      new SweepAndGoWebhookBiProcessor(new PostgresSweepAndGoWebhookBiStore(pool))
+    ])
+  : onboardingWebhookProcessor;
 const goHighLevelWebhookProcessor = pool
   ? new GoHighLevelWebhookProcessor(new PostgresGoHighLevelWebhookStore(pool), config)
   : undefined;

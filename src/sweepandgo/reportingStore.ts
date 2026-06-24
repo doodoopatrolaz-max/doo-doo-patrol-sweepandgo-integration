@@ -4,6 +4,25 @@ export type SyncRunRecord = {
   id: string;
 };
 
+export type SweepAndGoExistingContact = {
+  contactId: string;
+  customerId: string;
+  externalSweepGoId: string;
+  primaryEmail?: string;
+  primaryPhone?: string;
+};
+
+export type SweepAndGoContactEnrichmentInput = {
+  contactId: string;
+  email?: string;
+  phone?: string;
+};
+
+export type SweepAndGoContactEnrichmentUpdate = {
+  emailUpdated: boolean;
+  phoneUpdated: boolean;
+};
+
 export class SweepAndGoReportingStore {
   private readonly pool: any;
 
@@ -42,6 +61,75 @@ export class SweepAndGoReportingStore {
        WHERE id = $1`,
       [id, errorMessage.slice(0, 1000)]
     );
+  }
+
+  async listExistingSweepAndGoContacts(): Promise<SweepAndGoExistingContact[]> {
+    const result = await this.pool.query(
+      `SELECT c.id AS contact_id,
+              cu.id AS customer_id,
+              cu.external_sweepgo_id,
+              c.primary_email,
+              c.primary_phone
+       FROM customers cu
+       JOIN contacts c ON c.id = cu.contact_id
+       WHERE cu.external_sweepgo_id IS NOT NULL
+       ORDER BY cu.created_at ASC`
+    );
+
+    return result.rows.map((row: Record<string, unknown>) => ({
+      contactId: String(row.contact_id),
+      customerId: String(row.customer_id),
+      externalSweepGoId: String(row.external_sweepgo_id),
+      primaryEmail: stringValue(row.primary_email),
+      primaryPhone: stringValue(row.primary_phone)
+    }));
+  }
+
+  async enrichExistingSweepAndGoContact(
+    input: SweepAndGoContactEnrichmentInput
+  ): Promise<SweepAndGoContactEnrichmentUpdate> {
+    const result = await this.pool.query(
+      `WITH existing AS (
+         SELECT id, primary_email, primary_phone
+         FROM contacts
+         WHERE id = $1
+       ),
+       updated AS (
+         UPDATE contacts
+         SET primary_email = CASE
+               WHEN (contacts.primary_email IS NULL OR contacts.primary_email = '') AND $2 IS NOT NULL THEN $2
+               ELSE contacts.primary_email
+             END,
+             primary_phone = CASE
+               WHEN (contacts.primary_phone IS NULL OR contacts.primary_phone = '') AND $3 IS NOT NULL THEN $3
+               ELSE contacts.primary_phone
+             END,
+             metadata = metadata || $4::jsonb,
+             updated_at = NOW()
+         FROM existing
+         WHERE contacts.id = existing.id
+         RETURNING contacts.primary_email,
+                   contacts.primary_phone,
+                   existing.primary_email AS previous_email,
+                   existing.primary_phone AS previous_phone
+       )
+       SELECT * FROM updated`,
+      [
+        input.contactId,
+        input.email ?? null,
+        input.phone ?? null,
+        JSON.stringify({
+          sweepAndGoContactEnrichedAt: new Date().toISOString(),
+          sweepAndGoContactEnrichmentSource: "client_details"
+        })
+      ]
+    );
+
+    const row = result.rows[0] ?? {};
+    return {
+      emailUpdated: Boolean(input.email && !stringValue(row.previous_email) && row.primary_email === input.email),
+      phoneUpdated: Boolean(input.phone && !stringValue(row.previous_phone) && row.primary_phone === input.phone)
+    };
   }
 
   async upsertCustomer(record: SweepAndGoCustomerReportingRecord): Promise<void> {
@@ -180,4 +268,8 @@ export class SweepAndGoReportingStore {
       ]
     );
   }
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

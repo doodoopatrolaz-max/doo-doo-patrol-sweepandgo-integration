@@ -10,8 +10,14 @@ npm-debug.log*
 *.key
 *.p8
 *.p12
+client_secret*.json
+credentials*.json
+token*.json
+google-ads-oauth*.json
+.google-ads-oauth*
 customer_exports/
 exports/
+imports/
 raw_payloads/
 private_payloads/
 tmp/

@@ -17,6 +17,19 @@ class FakePool {
     if (sql.includes("FROM daily_ad_performance")) {
       return { rows: [{ meta_spend: 100, google_spend: 50 }] };
     }
+    if (sql.includes("FROM lead_customer_matches")) {
+      return {
+        rows: [{
+          facebook_matched: 0,
+          website_matched: 3,
+          total_matched: 3,
+          manual_review: 1
+        }]
+      };
+    }
+    if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
+      return { rows: [{ facebook_leads: 7, website_leads: 10 }] };
+    }
     if (sql.includes("FROM opportunities") && sql.includes("GROUP BY original_lead_source")) {
       return {
         rows: [
@@ -78,7 +91,17 @@ const summaryOnlyDataSource: DashboardDataSource = {
       cancellations: 0,
       netRecurringCustomerGrowth: 0,
       closeRate: null,
-      dataNotes: ["Close rate is deferred until safe lead-to-customer matching is complete."]
+      closeRateMetrics: {
+        facebookMatchedConversions: 0,
+        websiteMatchedConversions: 0,
+        totalMatchedConversions: 0,
+        manualReviewConversions: 0,
+        facebookCloseRate: null,
+        websiteCloseRate: null,
+        totalCloseRate: null,
+        costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
+      },
+      dataNotes: ["Cost per new customer is unavailable until Meta and Google Ads spend coverage is complete for the selected date range."]
     } satisfies DashboardSummary;
   },
   async getTrends() {
@@ -143,10 +166,19 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalLeads, 6);
     assert.equal(summary.newRecurringCustomers, 2);
     assert.equal(summary.costPerLead, 25);
-    assert.equal(summary.costPerNewRecurringCustomer, 75);
+    assert.equal(summary.costPerNewRecurringCustomer, null);
     assert.equal(summary.estimatedMrrAdded, 60);
     assert.equal(summary.cancellations, 1);
     assert.equal(summary.netRecurringCustomerGrowth, 1);
+    assert.equal(summary.closeRateMetrics.facebookMatchedConversions, 0);
+    assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 3);
+    assert.equal(summary.closeRateMetrics.totalMatchedConversions, 3);
+    assert.equal(summary.closeRateMetrics.manualReviewConversions, 1);
+    assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
+    assert.equal(summary.closeRateMetrics.websiteCloseRate, 30);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 17.65);
+    assert(summary.dataNotes.some((note) => note.includes("Cost per new customer is unavailable")));
+    assert(summary.dataNotes.some((note) => note.includes("manual review rows are not counted")));
   });
 
   it("returns safe no-data values without throwing", async () => {
@@ -156,6 +188,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalAdSpend, 0);
     assert.equal(summary.totalLeads, 0);
     assert.equal(summary.costPerLead, null);
+    assert.equal(summary.closeRateMetrics.totalMatchedConversions, 0);
     assert(summary.dataNotes.some((note) => note.includes("No database")));
   });
 

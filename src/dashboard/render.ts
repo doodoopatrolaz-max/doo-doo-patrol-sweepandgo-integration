@@ -87,7 +87,12 @@ function renderSummary(summary: DashboardSummary): string {
     ["Total leads", String(summary.totalLeads)],
     ["New recurring customers", String(summary.newRecurringCustomers)],
     ["Cost per lead", maybeMoney(summary.costPerLead)],
-    ["Cost per new recurring customer", maybeMoney(summary.costPerNewRecurringCustomer)],
+    ["Cost per new customer", "Unavailable"],
+    ["Facebook close rate", maybePercent(summary.closeRateMetrics.facebookCloseRate)],
+    ["Website close rate", maybePercent(summary.closeRateMetrics.websiteCloseRate)],
+    ["Total close rate", maybePercent(summary.closeRateMetrics.totalCloseRate)],
+    ["Matched converted customers", String(summary.closeRateMetrics.totalMatchedConversions)],
+    ["Manual review conversions", String(summary.closeRateMetrics.manualReviewConversions)],
     ["Estimated MRR added", summary.estimatedMrrAdded === null ? "Unavailable" : money(summary.estimatedMrrAdded)],
     ["Cancellations", String(summary.cancellations)],
     ["Net customer growth", signed(summary.netRecurringCustomerGrowth)]
@@ -181,7 +186,7 @@ function renderSources(sources: DashboardSources): string {
       </div>
       <div>
         <h2>Close Rate</h2>
-        <p class="big-number">Unavailable</p>
+        <p class="big-number">Stored Matches</p>
         <p class="muted">${escapeHtml(sources.matchingStatus)}</p>
       </div>
     </section>
@@ -300,6 +305,10 @@ function money(value: number): string {
 
 function maybeMoney(value: number | null): string {
   return value === null ? "No data" : money(value);
+}
+
+function maybePercent(value: number | null): string {
+  return value === null ? "No data" : `${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 }
 
 function signed(value: number): string {

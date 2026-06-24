@@ -16,7 +16,19 @@ export type DashboardSummary = {
   cancellations: number;
   netRecurringCustomerGrowth: number;
   closeRate: number | null;
+  closeRateMetrics: DashboardCloseRateMetrics;
   dataNotes: string[];
+};
+
+export type DashboardCloseRateMetrics = {
+  facebookMatchedConversions: number;
+  websiteMatchedConversions: number;
+  totalMatchedConversions: number;
+  manualReviewConversions: number;
+  facebookCloseRate: number | null;
+  websiteCloseRate: number | null;
+  totalCloseRate: number | null;
+  costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage";
 };
 
 export type DashboardTrendPoint = {

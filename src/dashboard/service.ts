@@ -1,6 +1,7 @@
 import { enumerateDates, type DashboardDateRange } from "./dateRange.ts";
 import type {
   DashboardCampaignRow,
+  DashboardCloseRateMetrics,
   DashboardDataSource,
   DashboardSourceRow,
   DashboardSources,
@@ -23,11 +24,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getSummary(range: DashboardDateRange): Promise<DashboardSummary> {
-    const [adSpend, leads, customers, cancellations] = await Promise.all([
+    const [adSpend, leads, customers, cancellations, closeRateMetrics] = await Promise.all([
       this.adSpendByPlatform(range),
       this.leadsBySource(range),
       this.newRecurringCustomers(range),
-      this.cancellations(range)
+      this.cancellations(range),
+      this.closeRateMetrics(range)
     ]);
 
     const facebookLeads = leads.facebook;
@@ -49,16 +51,18 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       totalLeads,
       newRecurringCustomers,
       costPerLead: totalLeads > 0 ? roundMoney(totalAdSpend / totalLeads) : null,
-      costPerNewRecurringCustomer: newRecurringCustomers > 0 ? roundMoney(totalAdSpend / newRecurringCustomers) : null,
+      costPerNewRecurringCustomer: null,
       estimatedMrrAdded,
       cancellations,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations,
-      closeRate: null,
+      closeRate: closeRateMetrics.totalCloseRate,
+      closeRateMetrics,
       dataNotes: dataNotes({
         googleSpend: adSpend.google,
         totalLeads,
         newRecurringCustomers,
         estimatedMrrAdded,
+        closeRateMetrics,
         sweepAndGoLiveWebhookProcessingActive: true
       })
     };
@@ -189,9 +193,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       })) satisfies DashboardCampaignRow[],
       unmatchedLeads: {
         count: integerValue(unmatchedRows.rows[0]?.count),
-        note: "Lead to customer matching is coming next."
+        note: "Unmatched lead count uses GoHighLevel lead records without a linked BI contact."
       },
-      matchingStatus: "Lead to customer matching: coming next"
+      matchingStatus: "Close rate uses stored stable lead-to-customer matches only."
     };
   }
 
@@ -300,6 +304,48 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     );
     return integerValue(result.rows[0]?.count);
   }
+
+  private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
+    const [leadRows, matchRows] = await Promise.all([
+      this.pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE original_lead_source = 'facebook')::int AS facebook_leads,
+           COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads
+         FROM opportunities
+         WHERE original_lead_date::date BETWEEN $1::date AND $2::date
+           AND original_lead_source IN ('facebook', 'website')`,
+        [range.startDate, range.endDate]
+      ),
+      this.pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'facebook')::int AS facebook_matched,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'website')::int AS website_matched,
+           COUNT(*) FILTER (WHERE status = 'matched')::int AS total_matched,
+           COUNT(*) FILTER (WHERE status = 'review')::int AS manual_review
+         FROM lead_customer_matches
+         WHERE lead_date BETWEEN $1::date AND $2::date`,
+        [range.startDate, range.endDate]
+      )
+    ]);
+    const leadRow = leadRows.rows[0] ?? {};
+    const matchRow = matchRows.rows[0] ?? {};
+    const facebookLeads = integerValue(leadRow.facebook_leads);
+    const websiteLeads = integerValue(leadRow.website_leads);
+    const facebookMatchedConversions = integerValue(matchRow.facebook_matched);
+    const websiteMatchedConversions = integerValue(matchRow.website_matched);
+    const totalMatchedConversions = integerValue(matchRow.total_matched);
+
+    return {
+      facebookMatchedConversions,
+      websiteMatchedConversions,
+      totalMatchedConversions,
+      manualReviewConversions: integerValue(matchRow.manual_review),
+      facebookCloseRate: percentage(facebookMatchedConversions, facebookLeads),
+      websiteCloseRate: percentage(websiteMatchedConversions, websiteLeads),
+      totalCloseRate: percentage(totalMatchedConversions, facebookLeads + websiteLeads),
+      costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
+    };
+  }
 }
 
 export class EmptyDashboardDataSource implements DashboardDataSource {
@@ -320,6 +366,7 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       cancellations: 0,
       netRecurringCustomerGrowth: 0,
       closeRate: null,
+      closeRateMetrics: emptyCloseRateMetrics(),
       dataNotes: ["No database connection is configured."]
     };
   }
@@ -345,9 +392,9 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       campaignPerformance: [],
       unmatchedLeads: {
         count: 0,
-        note: "Lead to customer matching is coming next."
+        note: "No database connection is configured."
       },
-      matchingStatus: "Lead to customer matching: coming next"
+      matchingStatus: "No database connection is configured."
     };
   }
 
@@ -385,6 +432,7 @@ function dataNotes(input: {
   totalLeads: number;
   newRecurringCustomers: number;
   estimatedMrrAdded: number | null;
+  closeRateMetrics: DashboardCloseRateMetrics;
   sweepAndGoLiveWebhookProcessingActive?: boolean;
 }): string[] {
   const notes: string[] = [];
@@ -403,8 +451,24 @@ function dataNotes(input: {
   if (input.estimatedMrrAdded === null) {
     notes.push("MRR added is unavailable until recurring price fields are confirmed.");
   }
-  notes.push("Close rate is deferred until safe lead-to-customer matching is complete.");
+  if (input.closeRateMetrics.costPerNewCustomerStatus === "unavailable_incomplete_spend_coverage") {
+    notes.push("Cost per new customer is unavailable until Meta and Google Ads spend coverage is complete for the selected date range.");
+  }
+  notes.push("Close rate uses stored stable GoHighLevel lead-to-customer matches only; manual review rows are not counted as conversions.");
   return notes;
+}
+
+function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
+  return {
+    facebookMatchedConversions: 0,
+    websiteMatchedConversions: 0,
+    totalMatchedConversions: 0,
+    manualReviewConversions: 0,
+    facebookCloseRate: null,
+    websiteCloseRate: null,
+    totalCloseRate: null,
+    costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
+  };
 }
 
 function integerValue(value: unknown): number {
@@ -415,6 +479,10 @@ function integerValue(value: unknown): number {
 function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function percentage(part: number, total: number): number | null {
+  return total > 0 ? Math.round((part / total) * 10000) / 100 : null;
 }
 
 function stringValue(value: unknown): string | undefined {

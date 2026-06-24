@@ -69,3 +69,41 @@ If that source is unavailable, the fallback choices are:
 - use a private billing subscriptions export if Sweep&Go can provide one;
 - use plan-name logic only as a clearly labeled estimate;
 - keep MRR unavailable until direct billing data is available.
+
+## Billing Subscriptions API/Export Discovery
+
+Discovery date: 2026-06-24
+
+Read-only discovery checked the public Sweep&Go Open API documentation and a tiny live sample of June 2026 BI customers that already had subscription-created webhook activity. No raw customer records or payloads were displayed.
+
+### Official Documentation
+
+The public Open API documentation lists clients, `client_details`, onboarding, reports, package/cross-sell pricing, and webhooks. It does not document a customer-level Billing -> Subscriptions read endpoint.
+
+### Live Read-Only Endpoint Attempts
+
+Result summary:
+
+- Sample customers checked: 2
+- Candidate endpoint attempts: 49
+- Successful HTTP 200 responses: 1
+- HTTP 404 responses: 48
+- Direct customer Billing -> Subscriptions sources found: 0
+
+The only successful endpoint was:
+
+- `GET /api/v2/packages_list`
+
+That endpoint exposes package/cross-sell catalog-style pricing fields, not a specific customer's active Billing -> Subscriptions table. It must not be used as direct customer MRR.
+
+Client-specific subscription/billing/report candidate endpoints tested under `/api/v1` and `/api/v2` returned 404. No direct endpoint was found for:
+
+- customer subscription rows
+- active subscription amount
+- billing option
+- subscription status from the Billing tab
+- canceled date/status from the Billing tab
+
+### Current MRR Decision
+
+It is not safe to apply MRR updates from API discovery yet. Keep MRR unavailable unless a direct customer billing subscription source is provided by Sweep&Go, a private export is supplied, or Bryan explicitly approves estimated plan-name logic.

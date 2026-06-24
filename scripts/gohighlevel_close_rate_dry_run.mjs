@@ -50,6 +50,24 @@ async function getPipelines(config) {
 }
 
 async function searchOpportunities(config, pipelineId) {
+  try {
+    return await searchOpportunitiesWithBody(config, {
+      locationId: config.goHighLevelLocationId,
+      pipelineId
+    });
+  } catch (error) {
+    if (!String(error?.message ?? "").includes("HTTP 422")) {
+      throw error;
+    }
+  }
+
+  const rows = await searchOpportunitiesWithBody(config, {
+    locationId: config.goHighLevelLocationId
+  });
+  return rows.filter((row) => stringValue(row.pipelineId ?? row.pipeline_id) === pipelineId);
+}
+
+async function searchOpportunitiesWithBody(config, baseBody) {
   const all = [];
   const maxPages = 12;
   const limit = 100;
@@ -57,8 +75,7 @@ async function searchOpportunities(config, pipelineId) {
     const response = await ghlRequest(config, "/opportunities/search", {
       method: "POST",
       body: {
-        locationId: config.goHighLevelLocationId,
-        pipelineId,
+        ...baseBody,
         limit,
         page
       }

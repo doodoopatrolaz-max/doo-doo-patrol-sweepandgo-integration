@@ -209,7 +209,10 @@ function responseShape(payload) {
   return { topLevel: typeof payload };
 }
 
-function isDirectBillingCandidate(fields) {
+function isDirectBillingCandidate(candidate, fields) {
+  if (candidate.scope && candidate.scope !== "client_sample") {
+    return false;
+  }
   return fields.subscriptionId.present
     && fields.subscriptionAmount.present
     && fields.billingInterval.present
@@ -374,6 +377,7 @@ async function main() {
       for (const clientId of clientsToTry) {
         const response = await requestCandidate(config, candidate, clientId);
         const fields = fieldAvailability(response.payload);
+        const directBillingCandidate = response.ok && isDirectBillingCandidate(candidate, fields);
         attempts.push({
           method: candidate.method,
           path: candidate.path,
@@ -381,10 +385,10 @@ async function main() {
           httpStatus: response.status,
           ok: response.ok,
           responseShape: responseShape(response.payload),
-          directBillingCandidate: response.ok && isDirectBillingCandidate(fields),
+          directBillingCandidate,
           fields
         });
-        if (response.ok && isDirectBillingCandidate(fields)) {
+        if (directBillingCandidate) {
           candidates.push(candidate);
         }
       }

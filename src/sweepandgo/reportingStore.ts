@@ -97,11 +97,11 @@ export class SweepAndGoReportingStore {
        updated AS (
          UPDATE contacts
          SET primary_email = CASE
-               WHEN (contacts.primary_email IS NULL OR contacts.primary_email = '') AND $2 IS NOT NULL THEN $2
+               WHEN (contacts.primary_email IS NULL OR contacts.primary_email = '') AND $2::text IS NOT NULL THEN $2::text
                ELSE contacts.primary_email
              END,
              primary_phone = CASE
-               WHEN (contacts.primary_phone IS NULL OR contacts.primary_phone = '') AND $3 IS NOT NULL THEN $3
+               WHEN (contacts.primary_phone IS NULL OR contacts.primary_phone = '') AND $3::text IS NOT NULL THEN $3::text
                ELSE contacts.primary_phone
              END,
              metadata = metadata || $4::jsonb,

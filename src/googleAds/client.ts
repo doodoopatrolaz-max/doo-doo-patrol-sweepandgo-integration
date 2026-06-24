@@ -119,14 +119,19 @@ export class GoogleAdsClient {
   private async searchPage(input: { query: string; pageSize: number; pageToken?: string }): Promise<SearchResponse> {
     const accessToken = await this.getAccessToken();
     const customerId = normalizeCustomerId(this.options.customerId);
+    const body: Record<string, unknown> = {
+      query: input.query,
+      pageToken: input.pageToken
+    };
+
+    if (supportsSearchPageSize(this.options.apiVersion)) {
+      body.pageSize = Math.max(1, Math.floor(input.pageSize));
+    }
+
     const response = await this.fetchJson(`${this.options.apiBaseUrl}/${this.options.apiVersion}/customers/${customerId}/googleAds:search`, {
       method: "POST",
       headers: this.headers(accessToken),
-      body: JSON.stringify({
-        query: input.query,
-        pageSize: Math.max(1, Math.floor(input.pageSize)),
-        pageToken: input.pageToken
-      })
+      body: JSON.stringify(body)
     });
     return response as SearchResponse;
   }
@@ -198,6 +203,11 @@ export class GoogleAdsClient {
 
 export function normalizeCustomerId(value: string): string {
   return value.trim().replace(/-/g, "");
+}
+
+export function supportsSearchPageSize(apiVersion: string): boolean {
+  const major = Number(apiVersion.trim().replace(/^v/i, "").split(".")[0]);
+  return !Number.isFinite(major) || major < 24;
 }
 
 function stringValue(value: unknown): string | undefined {

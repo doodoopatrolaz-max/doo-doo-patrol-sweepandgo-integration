@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AppConfig } from "../src/config.ts";
-import { GoogleAdsClient, normalizeCustomerId } from "../src/googleAds/client.ts";
+import { GoogleAdsClient, normalizeCustomerId, supportsSearchPageSize } from "../src/googleAds/client.ts";
 import {
   googleAdsAccountQuery,
   googleAdsCampaignPerformanceQuery,
@@ -95,7 +95,139 @@ describe("Google Ads mapper", () => {
   it("normalizes customer IDs without exposing credentials", () => {
     assert.equal(normalizeCustomerId("123-456-7890"), "1234567890");
   });
+
+  it("omits pageSize from Google Ads v24 search requests", async () => {
+    const calls = await captureGoogleAdsSearchRequests(async (client) => {
+      await client.discoverAccount();
+    }, { apiVersion: "v24" });
+
+    assert.equal(calls.searchBodies.length, 1);
+    assert.equal(calls.searchBodies[0].query, googleAdsAccountQuery());
+    assert.equal("pageSize" in calls.searchBodies[0], false);
+    assert.equal(calls.searchBodies[0].pageToken, undefined);
+  });
+
+  it("keeps pageSize for older Google Ads API versions", async () => {
+    const calls = await captureGoogleAdsSearchRequests(async (client) => {
+      await client.discoverAccount();
+    }, { apiVersion: "v23" });
+
+    assert.equal(calls.searchBodies.length, 1);
+    assert.equal(calls.searchBodies[0].pageSize, 1);
+    assert.equal(supportsSearchPageSize("v23"), true);
+    assert.equal(supportsSearchPageSize("v24"), false);
+  });
+
+  it("keeps max-pages protection when v24 omits pageSize", async () => {
+    const calls = await captureGoogleAdsSearchRequests(async (client) => {
+      const rows = await client.search({
+        query: googleAdsCampaignPerformanceQuery({ date: "2026-06-14", limit: 10 }),
+        pageSize: 10,
+        maxPages: 1
+      });
+      assert.equal(rows.length, 1);
+    }, {
+      apiVersion: "v24",
+      firstSearchResponse: {
+        results: [{ customer: { id: "1234567890" } }],
+        nextPageToken: "next_page_SANITIZED"
+      }
+    });
+
+    assert.equal(calls.searchBodies.length, 1);
+    assert.equal("pageSize" in calls.searchBodies[0], false);
+  });
+
+  it("sends v24 performance reads without pageSize and without logging secrets", async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...values: unknown[]) => {
+      logs.push(values.map(String).join(" "));
+    };
+
+    try {
+      const calls = await captureGoogleAdsSearchRequests(async (client) => {
+        await client.getCampaignPerformance({
+          date: "2026-06-14",
+          pageSize: 10,
+          maxPages: 1
+        });
+      }, { apiVersion: "v24" });
+
+      assert.equal(calls.searchBodies.length, 1);
+      assert(calls.searchBodies[0].query.includes("FROM campaign"));
+      assert(calls.searchBodies[0].query.includes("LIMIT 10"));
+      assert.equal("pageSize" in calls.searchBodies[0], false);
+      assert.equal(logs.length, 0);
+    } finally {
+      console.log = originalLog;
+    }
+  });
 });
+
+async function captureGoogleAdsSearchRequests(
+  action: (client: GoogleAdsClient) => Promise<void>,
+  options: {
+    apiVersion: string;
+    firstSearchResponse?: Record<string, unknown>;
+  }
+): Promise<{ searchBodies: Array<Record<string, unknown>> }> {
+  const originalFetch = globalThis.fetch;
+  const searchBodies: Array<Record<string, unknown>> = [];
+  let searchCount = 0;
+
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const requestUrl = String(url);
+    if (requestUrl.includes("oauth2.googleapis.com")) {
+      return jsonResponse({ access_token: "access_token_SANITIZED" });
+    }
+
+    searchCount += 1;
+    searchBodies.push(JSON.parse(String(init?.body ?? "{}")));
+    return jsonResponse(searchCount === 1 && options.firstSearchResponse
+      ? options.firstSearchResponse
+      : {
+          results: [{
+            customer: {
+              id: "1234567890",
+              descriptiveName: "Sanitized Account",
+              currencyCode: "USD",
+              timeZone: "America/Phoenix"
+            },
+            segments: { date: "2026-06-14" },
+            campaign: { id: "987654321" },
+            metrics: { costMicros: "1000000" }
+          }]
+        });
+  }) as typeof fetch;
+
+  try {
+    const client = new GoogleAdsClient({
+      developerToken: "developer_token_SANITIZED",
+      customerId: "123-456-7890",
+      loginCustomerId: "111-222-3333",
+      clientId: "client_id_SANITIZED",
+      clientSecret: "client_secret_SANITIZED",
+      refreshToken: "refresh_token_SANITIZED",
+      apiVersion: options.apiVersion,
+      apiBaseUrl: "https://googleads.googleapis.com",
+      oauthTokenUrl: "https://oauth2.googleapis.com/token"
+    });
+
+    await action(client);
+    return { searchBodies };
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+function jsonResponse(body: Record<string, unknown>): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify(body)
+  } as Response;
+}
 
 function googleConfig(overrides: Partial<AppConfig>): AppConfig {
   return {

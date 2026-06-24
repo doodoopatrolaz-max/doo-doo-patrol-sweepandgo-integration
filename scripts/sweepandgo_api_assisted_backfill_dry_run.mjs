@@ -184,10 +184,17 @@ async function main() {
       monthToDateNewRecurringBeforeProposedBackfill: biCounts.totalBiCustomersWithFirstRecurringDateInJune,
       monthToDateNewRecurringAfterProposedBackfill: 0,
       juneRowsMatchedToSweepAndGoApiClient: 0,
+      juneRowsMatchedToSweepAndGoApiClientByEmail: 0,
+      juneRowsMatchedToSweepAndGoApiClientByPhone: 0,
       juneRowsMatchedToBiCustomerBySweepAndGoClientId: 0,
+      juneRowsAlreadyInBiWithFirstRecurringDate: 0,
+      juneRowsInBiButMissingFirstRecurringDate: 0,
       juneRowsNoApiMatch: 0,
+      juneRowsAmbiguousApiMatches: 0,
       juneRowsApiMatchButNoBiCustomerMatch: 0,
+      juneRowsEligibleForBiCustomerContactUpsert: 0,
       juneRowsEligibleForFirstRecurringDateBackfill: 0,
+      juneRowsManualReview: 0,
       ...biCounts
     };
 
@@ -198,20 +205,31 @@ async function main() {
       const match = resolveApiMatch(csvRow, emailIndex, phoneIndex);
       if (match.type === "ambiguous") {
         result.ambiguousApiMatches += 1;
+        if (inJune) {
+          result.juneRowsAmbiguousApiMatches += 1;
+          result.juneRowsManualReview += 1;
+        }
         continue;
       }
       if (match.type === "none") {
         result.noApiMatch += 1;
         if (inJune) {
           result.juneRowsNoApiMatch += 1;
+          result.juneRowsManualReview += 1;
         }
         continue;
       }
 
       if (match.type === "email") {
         result.rowsMatchedToSweepAndGoApiClientByEmail += 1;
+        if (inJune) {
+          result.juneRowsMatchedToSweepAndGoApiClientByEmail += 1;
+        }
       } else {
         result.rowsMatchedToSweepAndGoApiClientByPhone += 1;
+        if (inJune) {
+          result.juneRowsMatchedToSweepAndGoApiClientByPhone += 1;
+        }
       }
       if (inJune) {
         result.juneRowsMatchedToSweepAndGoApiClient += 1;
@@ -222,6 +240,9 @@ async function main() {
         result.apiMatchButNoBiCustomerMatch += 1;
         if (inJune) {
           result.juneRowsApiMatchButNoBiCustomerMatch += 1;
+          result.juneRowsEligibleForBiCustomerContactUpsert += 1;
+          result.juneRowsEligibleForFirstRecurringDateBackfill += 1;
+          proposedDates.set(match.apiClient.externalSweepGoId, createdAt);
         }
         continue;
       }
@@ -229,6 +250,11 @@ async function main() {
       result.rowsMatchedToBiCustomerBySweepAndGoClientId += 1;
       if (inJune) {
         result.juneRowsMatchedToBiCustomerBySweepAndGoClientId += 1;
+        if (biCustomer.firstRecurringDate) {
+          result.juneRowsAlreadyInBiWithFirstRecurringDate += 1;
+        } else {
+          result.juneRowsInBiButMissingFirstRecurringDate += 1;
+        }
       }
 
       if (matchedBiCustomers.has(match.apiClient.externalSweepGoId)) {

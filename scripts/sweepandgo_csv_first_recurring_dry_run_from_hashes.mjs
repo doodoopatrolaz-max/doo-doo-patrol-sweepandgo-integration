@@ -115,10 +115,7 @@ function main() {
   const customerRows = Array.isArray(exportData.rows) ? exportData.rows : [];
   const emailIndex = indexByHash(customerRows, "emailHash");
   const phoneIndex = indexByHash(customerRows, "phoneHash");
-  const range = parseDashboardDateRange(() => "thisMonth", {
-    timeZone: "America/Phoenix",
-    now: new Date()
-  });
+  const range = parseDashboardDateRange({ range: "thisMonth" }, new Date(), "America/Phoenix");
 
   const result = {
     csvRowsRead: records.length,

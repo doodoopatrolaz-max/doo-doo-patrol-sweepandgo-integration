@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -30,7 +31,7 @@ class FakePool {
     if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
       return { rows: [{ facebook_leads: 7, website_leads: 10 }] };
     }
-    if (sql.includes("FROM opportunities") && sql.includes("GROUP BY original_lead_source")) {
+    if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
       return {
         rows: [
           { source: "facebook", count: 3 },
@@ -179,6 +180,18 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.closeRateMetrics.totalCloseRate, 17.65);
     assert(summary.dataNotes.some((note) => note.includes("Cost per new customer is unavailable")));
     assert(summary.dataNotes.some((note) => note.includes("manual review rows are not counted")));
+    const leadQueries = pool.queries.filter((query) => query.sql.includes("FROM opportunities"));
+    assert(leadQueries.some((query) => query.sql.includes("reporting_exclusions")));
+    assert(leadQueries.every((query) => !query.sql.includes("ILIKE")));
+  });
+
+  it("keeps lead exclusions explicit and migration-backed", () => {
+    const migration = fs.readFileSync("migrations/008_create_reporting_exclusions.sql", "utf8");
+
+    assert(migration.includes("CREATE TABLE IF NOT EXISTS reporting_exclusions"));
+    assert(migration.includes("uniq_reporting_exclusions_entity_reason_source"));
+    assert(migration.includes("applies_to_metric TEXT[]"));
+    assert(migration.includes("008_create_reporting_exclusions"));
   });
 
   it("returns safe no-data values without throwing", async () => {

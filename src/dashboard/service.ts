@@ -15,6 +15,7 @@ type Queryable = {
 };
 
 const SOURCES: DashboardSourceRow["source"][] = ["facebook", "website", "other", "unknown"];
+const DASHBOARD_LEAD_EXCLUSION_METRICS = "ARRAY['lead_denominator', 'dashboard_leads']";
 
 export class PostgresDashboardDataSource implements DashboardDataSource {
   private readonly pool: Queryable;
@@ -85,9 +86,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                 COUNT(*) FILTER (WHERE original_lead_source = 'facebook')::int AS facebook_leads,
                 COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads,
                 COUNT(*)::int AS total_leads
-         FROM opportunities
-         WHERE original_lead_date::date BETWEEN $1::date AND $2::date
+         FROM opportunities o
+         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
            AND original_lead_source IN ('facebook', 'website', 'other', 'unknown')
+           AND ${reportingLeadExclusionSql("o")}
          GROUP BY original_lead_date::date
          ORDER BY original_lead_date::date`,
         [range.startDate, range.endDate]
@@ -136,9 +138,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const [leadRows, customerRows, campaignRows, unmatchedRows] = await Promise.all([
       this.pool.query(
         `SELECT original_lead_source AS source, COUNT(*)::int AS count
-         FROM opportunities
-         WHERE original_lead_date::date BETWEEN $1::date AND $2::date
-         GROUP BY original_lead_source`,
+         FROM opportunities o
+         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+           AND ${reportingLeadExclusionSql("o")}
+         GROUP BY o.original_lead_source`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
@@ -164,10 +167,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       ),
       this.pool.query(
         `SELECT COUNT(*)::int AS count
-         FROM opportunities
-         WHERE original_lead_date::date BETWEEN $1::date AND $2::date
-           AND original_lead_source IN ('facebook', 'website')
-           AND contact_id IS NULL`,
+         FROM opportunities o
+         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+           AND o.original_lead_source IN ('facebook', 'website')
+           AND o.contact_id IS NULL
+           AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       )
     ]);
@@ -271,9 +275,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   private async leadsBySource(range: DashboardDateRange): Promise<Record<DashboardSourceRow["source"], number>> {
     const result = await this.pool.query(
       `SELECT original_lead_source AS source, COUNT(*)::int AS count
-       FROM opportunities
-       WHERE original_lead_date::date BETWEEN $1::date AND $2::date
-       GROUP BY original_lead_source`,
+       FROM opportunities o
+       WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+         AND ${reportingLeadExclusionSql("o")}
+       GROUP BY o.original_lead_source`,
       [range.startDate, range.endDate]
     );
     return sourceCountMap(result.rows, "source", "count");
@@ -311,9 +316,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         `SELECT
            COUNT(*) FILTER (WHERE original_lead_source = 'facebook')::int AS facebook_leads,
            COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads
-         FROM opportunities
-         WHERE original_lead_date::date BETWEEN $1::date AND $2::date
-           AND original_lead_source IN ('facebook', 'website')`,
+         FROM opportunities o
+         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+           AND o.original_lead_source IN ('facebook', 'website')
+           AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
@@ -425,6 +431,17 @@ function normalizeSource(value: unknown): DashboardSourceRow["source"] {
     return value;
   }
   return "unknown";
+}
+
+function reportingLeadExclusionSql(alias: string): string {
+  return `NOT EXISTS (
+    SELECT 1
+    FROM reporting_exclusions re
+    WHERE re.provider = 'gohighlevel'
+      AND re.entity_type = 'opportunity'
+      AND re.entity_external_id = ${alias}.external_opportunity_id
+      AND re.applies_to_metric && ${DASHBOARD_LEAD_EXCLUSION_METRICS}
+  )`;
 }
 
 function dataNotes(input: {

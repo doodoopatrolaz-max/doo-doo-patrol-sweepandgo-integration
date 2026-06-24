@@ -36,6 +36,9 @@ function dateOnly(value) {
   if (!value) {
     return null;
   }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
   const text = String(value);
   return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : null;
 }

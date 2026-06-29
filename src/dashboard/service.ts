@@ -1,6 +1,7 @@
 import { enumerateDates, type DashboardDateRange } from "./dateRange.ts";
 import type {
   DashboardCampaignRow,
+  DashboardAdProviderStatus,
   DashboardCloseRateMetrics,
   DashboardDataSource,
   DashboardSourceRow,
@@ -25,12 +26,13 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getSummary(range: DashboardDateRange): Promise<DashboardSummary> {
-    const [adSpend, leads, customers, cancellations, closeRateMetrics] = await Promise.all([
+    const [adSpend, leads, customers, cancellations, closeRateMetrics, googleAdsStatus] = await Promise.all([
       this.adSpendByPlatform(range),
       this.leadsBySource(range),
       this.newRecurringCustomers(range),
       this.cancellations(range),
-      this.closeRateMetrics(range)
+      this.closeRateMetrics(range),
+      this.googleAdsStatus()
     ]);
 
     const facebookLeads = leads.facebook;
@@ -46,6 +48,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       totalAdSpend: roundMoney(totalAdSpend),
       metaSpend: roundMoney(adSpend.meta),
       googleSpend: roundMoney(adSpend.google),
+      googleAdsStatus,
       facebookLeads,
       websiteLeads,
       otherLeads,
@@ -59,7 +62,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       closeRate: closeRateMetrics.totalCloseRate,
       closeRateMetrics,
       dataNotes: dataNotes({
-        googleSpend: adSpend.google,
+        googleAdsStatus,
         totalLeads,
         newRecurringCustomers,
         estimatedMrrAdded,
@@ -272,6 +275,46 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     };
   }
 
+  private async googleAdsStatus(): Promise<DashboardAdProviderStatus> {
+    const result = await this.pool.query(
+      `SELECT
+          EXISTS (
+            SELECT 1
+            FROM sync_runs
+            WHERE provider = 'google_ads'
+              AND status = 'completed'
+          ) AS has_successful_sync,
+          EXISTS (
+            SELECT 1
+            FROM daily_ad_performance
+            WHERE platform IN ('google', 'google_ads')
+          ) AS has_historical_performance,
+          (
+            SELECT status
+            FROM sync_runs
+            WHERE provider = 'google_ads'
+            ORDER BY started_at DESC
+            LIMIT 1
+          ) AS latest_status
+       `
+    );
+    const row = result.rows[0] ?? {};
+    const hasSuccessfulSync = Boolean(row.has_successful_sync);
+    const hasHistoricalPerformance = Boolean(row.has_historical_performance);
+    const latestStatus = stringValue(row.latest_status);
+    const latestFailed = latestStatus === "failed";
+    const connected = hasSuccessfulSync || hasHistoricalPerformance;
+    return {
+      connected,
+      latestStatus,
+      latestFailed,
+      hasHistoricalPerformance,
+      warning: latestFailed
+        ? "Latest Google Ads sync failed. Stored spend remains visible; check Sync Health for the current sync issue."
+        : undefined
+    };
+  }
+
   private async leadsBySource(range: DashboardDateRange): Promise<Record<DashboardSourceRow["source"], number>> {
     const result = await this.pool.query(
       `SELECT original_lead_source AS source, COUNT(*)::int AS count
@@ -361,6 +404,7 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       totalAdSpend: 0,
       metaSpend: 0,
       googleSpend: 0,
+      googleAdsStatus: disconnectedGoogleAdsStatus(),
       facebookLeads: 0,
       websiteLeads: 0,
       otherLeads: 0,
@@ -445,7 +489,7 @@ function reportingLeadExclusionSql(alias: string): string {
 }
 
 function dataNotes(input: {
-  googleSpend: number;
+  googleAdsStatus: DashboardAdProviderStatus;
   totalLeads: number;
   newRecurringCustomers: number;
   estimatedMrrAdded: number | null;
@@ -456,8 +500,10 @@ function dataNotes(input: {
   if (input.sweepAndGoLiveWebhookProcessingActive) {
     notes.push("Sweep&Go live webhook processing is active for safe customer status, subscription, and cancellation signals.");
   }
-  if (input.googleSpend === 0) {
-    notes.push("Google Ads live reads are not connected yet or have no spend for this range.");
+  if (!input.googleAdsStatus.connected) {
+    notes.push("Google Ads is not connected yet. Add a successful sync or stored performance rows to enable Google spend reporting.");
+  } else if (input.googleAdsStatus.latestFailed) {
+    notes.push(input.googleAdsStatus.warning ?? "Latest Google Ads sync failed. Stored spend remains visible; check Sync Health for details.");
   }
   if (input.totalLeads === 0) {
     notes.push("No GoHighLevel leads found for this range.");
@@ -473,6 +519,14 @@ function dataNotes(input: {
   }
   notes.push("Close rate uses stored stable GoHighLevel lead-to-customer matches only; manual review rows are not counted as conversions.");
   return notes;
+}
+
+function disconnectedGoogleAdsStatus(): DashboardAdProviderStatus {
+  return {
+    connected: false,
+    latestFailed: false,
+    hasHistoricalPerformance: false
+  };
 }
 
 function emptyCloseRateMetrics(): DashboardCloseRateMetrics {

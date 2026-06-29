@@ -5,6 +5,7 @@ export type DashboardSummary = {
   totalAdSpend: number;
   metaSpend: number;
   googleSpend: number;
+  googleAdsStatus: DashboardAdProviderStatus;
   facebookLeads: number;
   websiteLeads: number;
   otherLeads: number;
@@ -18,6 +19,14 @@ export type DashboardSummary = {
   closeRate: number | null;
   closeRateMetrics: DashboardCloseRateMetrics;
   dataNotes: string[];
+};
+
+export type DashboardAdProviderStatus = {
+  connected: boolean;
+  latestStatus?: string;
+  latestFailed: boolean;
+  hasHistoricalPerformance: boolean;
+  warning?: string;
 };
 
 export type DashboardCloseRateMetrics = {

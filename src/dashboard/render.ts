@@ -81,7 +81,7 @@ function renderSummary(summary: DashboardSummary): string {
   const cards = [
     ["Total ad spend", money(summary.totalAdSpend)],
     ["Meta spend", money(summary.metaSpend)],
-    ["Google spend", summary.googleSpend > 0 ? money(summary.googleSpend) : "Not connected yet"],
+    ["Google spend", summary.googleAdsStatus.connected ? money(summary.googleSpend) : "Not connected yet"],
     ["Facebook leads", String(summary.facebookLeads)],
     ["Website leads", String(summary.websiteLeads)],
     ["Total leads", String(summary.totalLeads)],

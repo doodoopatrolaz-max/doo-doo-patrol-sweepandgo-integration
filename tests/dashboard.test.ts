@@ -5,8 +5,9 @@ import { describe, it } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "../src/config.ts";
 import { parseDashboardDateRange } from "../src/dashboard/dateRange.ts";
+import { renderDashboard } from "../src/dashboard/render.ts";
 import { EmptyDashboardDataSource, PostgresDashboardDataSource } from "../src/dashboard/service.ts";
-import type { DashboardDataSource, DashboardSummary } from "../src/dashboard/types.ts";
+import type { DashboardData, DashboardDataSource, DashboardSummary } from "../src/dashboard/types.ts";
 import { createRequestHandler } from "../src/http/app.ts";
 import { InMemoryWebhookEventStore } from "../src/webhooks/inMemoryStore.ts";
 
@@ -15,6 +16,15 @@ class FakePool {
 
   async query(sql: string, params: unknown[] = []) {
     this.queries.push({ sql, params });
+    if (sql.includes("has_successful_sync")) {
+      return {
+        rows: [{
+          has_successful_sync: true,
+          has_historical_performance: true,
+          latest_status: "completed"
+        }]
+      };
+    }
     if (sql.includes("FROM daily_ad_performance")) {
       return { rows: [{ meta_spend: 100, google_spend: 50 }] };
     }
@@ -50,6 +60,46 @@ class FakePool {
   }
 }
 
+class GoogleSpendPool extends FakePool {
+  private readonly input: {
+    metaSpend: number;
+    googleSpend: number;
+    hasSuccessfulSync: boolean;
+    hasHistoricalPerformance: boolean;
+    latestStatus?: string;
+  };
+
+  constructor(
+    input: {
+      metaSpend: number;
+      googleSpend: number;
+      hasSuccessfulSync: boolean;
+      hasHistoricalPerformance: boolean;
+      latestStatus?: string;
+    }
+  ) {
+    super();
+    this.input = input;
+  }
+
+  override async query(sql: string, params: unknown[] = []) {
+    this.queries.push({ sql, params });
+    if (sql.includes("has_successful_sync")) {
+      return {
+        rows: [{
+          has_successful_sync: this.input.hasSuccessfulSync,
+          has_historical_performance: this.input.hasHistoricalPerformance,
+          latest_status: this.input.latestStatus
+        }]
+      };
+    }
+    if (sql.includes("FROM daily_ad_performance")) {
+      return { rows: [{ meta_spend: this.input.metaSpend, google_spend: this.input.googleSpend }] };
+    }
+    return await super.query(sql, params);
+  }
+}
+
 class SyncHealthPool {
   async query(sql: string) {
     if (sql.includes("FROM sync_runs")) {
@@ -81,6 +131,12 @@ const summaryOnlyDataSource: DashboardDataSource = {
       totalAdSpend: 10,
       metaSpend: 10,
       googleSpend: 0,
+      googleAdsStatus: {
+        connected: true,
+        latestStatus: "completed",
+        latestFailed: false,
+        hasHistoricalPerformance: true
+      },
       facebookLeads: 1,
       websiteLeads: 0,
       otherLeads: 0,
@@ -160,6 +216,7 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(summary.metaSpend, 100);
     assert.equal(summary.googleSpend, 50);
+    assert.equal(summary.googleAdsStatus.connected, true);
     assert.equal(summary.totalAdSpend, 150);
     assert.equal(summary.facebookLeads, 3);
     assert.equal(summary.websiteLeads, 2);
@@ -180,6 +237,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.closeRateMetrics.totalCloseRate, 17.65);
     assert(summary.dataNotes.some((note) => note.includes("Cost per new customer is unavailable")));
     assert(summary.dataNotes.some((note) => note.includes("manual review rows are not counted")));
+    assert(!summary.dataNotes.some((note) => note.includes("Google Ads is not connected yet")));
     const leadQueries = pool.queries.filter((query) => query.sql.includes("FROM opportunities"));
     assert(leadQueries.some((query) => query.sql.includes("reporting_exclusions")));
     assert(leadQueries.every((query) => !query.sql.includes("ILIKE")));
@@ -199,6 +257,7 @@ describe("dashboard KPI aggregation", () => {
     const summary = await service.getSummary(parseDashboardDateRange({ range: "today" }));
 
     assert.equal(summary.totalAdSpend, 0);
+    assert.equal(summary.googleAdsStatus.connected, false);
     assert.equal(summary.totalLeads, 0);
     assert.equal(summary.costPerLead, null);
     assert.equal(summary.closeRateMetrics.totalMatchedConversions, 0);
@@ -212,6 +271,88 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(syncHealth.rows[0]?.provider, "sweepandgo");
     assert.equal(syncHealth.rows[0]?.isStale, true);
     assert(syncHealth.rows[0]?.staleWarning?.includes("older than 24 hours"));
+  });
+
+  it("treats Google as connected when monthly spend is stored", async () => {
+    const service = new PostgresDashboardDataSource(new GoogleSpendPool({
+      metaSpend: 0,
+      googleSpend: 51.69,
+      hasSuccessfulSync: true,
+      hasHistoricalPerformance: true,
+      latestStatus: "completed"
+    }));
+    const summary = await service.getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+
+    assert.equal(summary.googleSpend, 51.69);
+    assert.equal(summary.googleAdsStatus.connected, true);
+    assert(!summary.dataNotes.some((note) => note.includes("not connected")));
+  });
+
+  it("shows zero Google spend when connected but selected day has no spend", async () => {
+    const service = new PostgresDashboardDataSource(new GoogleSpendPool({
+      metaSpend: 0,
+      googleSpend: 0,
+      hasSuccessfulSync: true,
+      hasHistoricalPerformance: true,
+      latestStatus: "completed"
+    }));
+    const summary = await service.getSummary(parseDashboardDateRange({ range: "today" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    assert.equal(summary.googleSpend, 0);
+    assert.equal(summary.googleAdsStatus.connected, true);
+    assert(html.includes("Google spend"));
+    assert(html.includes("$0.00"));
+    assert(!html.includes("Not connected yet"));
+  });
+
+  it("marks Google as not connected only when no successful sync or performance rows exist", async () => {
+    const service = new PostgresDashboardDataSource(new GoogleSpendPool({
+      metaSpend: 0,
+      googleSpend: 0,
+      hasSuccessfulSync: false,
+      hasHistoricalPerformance: false
+    }));
+    const summary = await service.getSummary(parseDashboardDateRange({ range: "today" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    assert.equal(summary.googleAdsStatus.connected, false);
+    assert(summary.dataNotes.some((note) => note.includes("Google Ads is not connected yet")));
+    assert(html.includes("Not connected yet"));
+  });
+
+  it("keeps historical Google spend visible when the latest sync failed", async () => {
+    const service = new PostgresDashboardDataSource(new GoogleSpendPool({
+      metaSpend: 0,
+      googleSpend: 51.69,
+      hasSuccessfulSync: true,
+      hasHistoricalPerformance: true,
+      latestStatus: "failed"
+    }));
+    const summary = await service.getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    assert.equal(summary.googleAdsStatus.connected, true);
+    assert.equal(summary.googleAdsStatus.latestFailed, true);
+    assert.equal(summary.googleSpend, 51.69);
+    assert(html.includes("$51.69"));
+    assert(!html.includes("Not connected yet"));
+    assert(summary.dataNotes.some((note) => note.includes("Latest Google Ads sync failed")));
+  });
+
+  it("renders Meta and connected Google zero-spend cards consistently", async () => {
+    const summary = await new PostgresDashboardDataSource(new GoogleSpendPool({
+      metaSpend: 0,
+      googleSpend: 0,
+      hasSuccessfulSync: true,
+      hasHistoricalPerformance: false,
+      latestStatus: "completed"
+    })).getSummary(parseDashboardDateRange({ range: "today" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    const zeroMoneyOccurrences = html.match(/\$0\.00/g)?.length ?? 0;
+    assert(zeroMoneyOccurrences >= 3);
+    assert(!html.includes("Not connected yet"));
   });
 });
 
@@ -307,6 +448,20 @@ function testHandler(configOverrides: Partial<AppConfig>, dashboardDataSource: D
     webhookStore: new InMemoryWebhookEventStore(),
     dashboardDataSource
   });
+}
+
+function dashboardData(summary: DashboardSummary): DashboardData {
+  return {
+    summary,
+    trends: [],
+    sources: {
+      leadSources: [],
+      campaignPerformance: [],
+      unmatchedLeads: { count: 0, note: "No unmatched leads." },
+      matchingStatus: "Stable matches only."
+    },
+    syncHealth: { rows: [] }
+  };
 }
 
 async function request(input: {

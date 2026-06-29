@@ -194,7 +194,8 @@ export class GoogleAdsClient {
         continue;
       }
 
-      throw new Error(`Google Ads read request failed with HTTP ${response.status}`);
+      const errorText = await response.text().catch(() => "");
+      throw new Error(formatGoogleAdsHttpError(response.status, errorText));
     }
 
     throw new Error("Google Ads read request failed");
@@ -208,6 +209,98 @@ export function normalizeCustomerId(value: string): string {
 export function supportsSearchPageSize(apiVersion: string): boolean {
   const major = Number(apiVersion.trim().replace(/^v/i, "").split(".")[0]);
   return !Number.isFinite(major) || major < 24;
+}
+
+export function formatGoogleAdsHttpError(status: number, bodyText: string): string {
+  const details = summarizeGoogleAdsError(bodyText);
+  return details
+    ? `Google Ads read request failed with HTTP ${status}: ${details}`
+    : `Google Ads read request failed with HTTP ${status}`;
+}
+
+function summarizeGoogleAdsError(bodyText: string): string | undefined {
+  if (!bodyText.trim()) {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return sanitizeGoogleAdsErrorText(bodyText).slice(0, 500);
+  }
+
+  const parts: string[] = [];
+  if (isRecord(parsed)) {
+    const topLevelError = parsed.error;
+    if (typeof topLevelError === "string") {
+      parts.push(`error=${sanitizeGoogleAdsErrorText(topLevelError)}`);
+    }
+    if (typeof parsed.error_description === "string") {
+      parts.push(`description=${sanitizeGoogleAdsErrorText(parsed.error_description)}`);
+    }
+
+    if (isRecord(topLevelError)) {
+      const code = typeof topLevelError.code === "number" ? topLevelError.code : undefined;
+      const status = typeof topLevelError.status === "string" ? topLevelError.status : undefined;
+      const message = typeof topLevelError.message === "string" ? topLevelError.message : undefined;
+      if (code !== undefined) {
+        parts.push(`code=${code}`);
+      }
+      if (status) {
+        parts.push(`status=${sanitizeGoogleAdsErrorText(status)}`);
+      }
+      if (message) {
+        parts.push(`message=${sanitizeGoogleAdsErrorText(message)}`);
+      }
+      parts.push(...googleAdsFailureDetails(topLevelError.details));
+    }
+  }
+
+  return parts.length ? parts.join("; ").slice(0, 1000) : sanitizeGoogleAdsErrorText(bodyText).slice(0, 500);
+}
+
+function googleAdsFailureDetails(details: unknown): string[] {
+  if (!Array.isArray(details)) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  for (const detail of details) {
+    if (!isRecord(detail) || !Array.isArray(detail.errors)) {
+      continue;
+    }
+    for (const error of detail.errors) {
+      if (!isRecord(error)) {
+        continue;
+      }
+      const errorCode = isRecord(error.errorCode)
+        ? Object.entries(error.errorCode)
+            .map(([key, value]) => `${key}=${sanitizeGoogleAdsErrorText(String(value))}`)
+            .join(",")
+        : undefined;
+      const message = typeof error.message === "string" ? sanitizeGoogleAdsErrorText(error.message) : undefined;
+      if (errorCode || message) {
+        parts.push(`googleAdsError=${[errorCode, message].filter(Boolean).join(": ")}`);
+      }
+    }
+  }
+  return parts;
+}
+
+function sanitizeGoogleAdsErrorText(value: string): string {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [REDACTED]")
+    .replace(/(access[_-]?token|refresh[_-]?token|client[_-]?secret|developer[_-]?token)\s*[:=]\s*[^,}\s]+/gi, "$1=[REDACTED]")
+    .replace(/customers\/[0-9-]+/gi, "customers/[REDACTED]")
+    .replace(/customer[_ -]?id\s*[:=]\s*['\"]?[0-9-]+['\"]?/gi, "customer_id=[REDACTED]")
+    .replace(/login[_ -]?customer[_ -]?id\s*[:=]\s*['\"]?[0-9-]+['\"]?/gi, "login_customer_id=[REDACTED]")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[EMAIL_REDACTED]")
+    .replace(/\b\d{3}[-.) ]?\d{3}[-. ]?\d{4}\b/g, "[PHONE_REDACTED]");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringValue(value: unknown): string | undefined {

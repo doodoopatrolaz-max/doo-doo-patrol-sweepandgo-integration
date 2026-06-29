@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AppConfig } from "../src/config.ts";
-import { GoogleAdsClient, normalizeCustomerId, supportsSearchPageSize } from "../src/googleAds/client.ts";
+import {
+  formatGoogleAdsHttpError,
+  GoogleAdsClient,
+  normalizeCustomerId,
+  supportsSearchPageSize
+} from "../src/googleAds/client.ts";
 import {
   googleAdsAccountQuery,
   googleAdsCampaignPerformanceQuery,
@@ -162,6 +167,41 @@ describe("Google Ads mapper", () => {
     } finally {
       console.log = originalLog;
     }
+  });
+
+  it("formats OAuth failures with sanitized actionable reasons", () => {
+    const message = formatGoogleAdsHttpError(400, JSON.stringify({
+      error: "invalid_grant",
+      error_description: "Token has been expired or revoked.",
+      refresh_token: "refresh_token_SHOULD_NOT_LEAK"
+    }));
+
+    assert(message.includes("invalid_grant"));
+    assert(message.includes("Token has been expired or revoked."));
+    assert(!message.includes("refresh_token_SHOULD_NOT_LEAK"));
+  });
+
+  it("formats Google Ads API failures without exposing private identifiers", () => {
+    const message = formatGoogleAdsHttpError(400, JSON.stringify({
+      error: {
+        code: 400,
+        message: "Request contains an invalid argument for customers/1234567890.",
+        status: "INVALID_ARGUMENT",
+        details: [{
+          "@type": "type.googleapis.com/google.ads.googleads.v24.errors.GoogleAdsFailure",
+          errors: [{
+            errorCode: { queryError: "UNRECOGNIZED_FIELD" },
+            message: "Unrecognized field in the query: metrics.example_field for customer_id: 1234567890."
+          }]
+        }]
+      }
+    }));
+
+    assert(message.includes("status=INVALID_ARGUMENT"));
+    assert(message.includes("queryError=UNRECOGNIZED_FIELD"));
+    assert(message.includes("customers/[REDACTED]"));
+    assert(message.includes("customer_id=[REDACTED]"));
+    assert(!message.includes("1234567890"));
   });
 });
 

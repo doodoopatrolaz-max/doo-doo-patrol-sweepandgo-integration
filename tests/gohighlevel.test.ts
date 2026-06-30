@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { GoHighLevelClient } from "../src/gohighlevel/client.ts";
 import { createEventFingerprint } from "../src/webhooks/fingerprint.ts";
 import {
   buildOpportunityWebhookDeduplicationKey,
@@ -21,6 +22,16 @@ const stageConfig = {
   websiteQuoteLeadStageName: "Website Quote Lead"
 };
 
+const newLeadPipelineStageConfig = {
+  locationId: "loc_SANITIZED",
+  pipelineId: "pipe_NEW_LEAD_TO_ONBOARDING",
+  pipelineName: "New Lead to Onboarding",
+  facebookNewLeadStageId: "stage_NEW_FACEBOOK",
+  facebookNewLeadStageName: "Facebook New Lead",
+  websiteQuoteLeadStageId: "stage_NEW_WEBSITE",
+  websiteQuoteLeadStageName: "Website Quote Lead"
+};
+
 describe("GoHighLevel lead classification", () => {
   it("classifies Facebook and website leads by exact stage IDs first", () => {
     assert.equal(classifyStage("stage_FACEBOOK", "Different label", stageConfig), "facebook");
@@ -31,6 +42,15 @@ describe("GoHighLevel lead classification", () => {
     assert.equal(classifyStage(undefined, "Facebook New Lead", stageConfig), "facebook");
     assert.equal(classifyStage(undefined, "Website Quote Lead", stageConfig), "website");
     assert.equal(classifyStage(undefined, "Website Follow Up", stageConfig), undefined);
+  });
+
+  it("classifies the new lead pipeline Facebook and Website stage IDs", () => {
+    assert.equal(classifyStage("stage_NEW_FACEBOOK", "Different label", newLeadPipelineStageConfig), "facebook");
+    assert.equal(classifyStage("stage_NEW_WEBSITE", "Different label", newLeadPipelineStageConfig), "website");
+  });
+
+  it("leaves unknown new-pipeline stages unclassified for review-safe handling", () => {
+    assert.equal(classifyStage("stage_UNKNOWN", "Follow Up", newLeadPipelineStageConfig), undefined);
   });
 
   it("preserves original lead source and flags cross-source stage changes for review", () => {
@@ -113,5 +133,42 @@ describe("GoHighLevel lead classification", () => {
       createEventFingerprint(payload, "gohighlevel"),
       createEventFingerprint({ ...payload }, "gohighlevel")
     );
+  });
+});
+
+describe("GoHighLevel client", () => {
+  it("sends the configured pipeline ID in read-only opportunity searches", async () => {
+    const originalFetch = globalThis.fetch;
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body ?? "{}")));
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ opportunities: [] })
+      } as Response;
+    }) as typeof fetch;
+
+    try {
+      const client = new GoHighLevelClient({
+        baseUrl: "https://services.example.invalid",
+        apiVersion: "2021-07-28",
+        privateIntegrationToken: "token_SANITIZED"
+      });
+      await client.searchOpportunities({
+        locationId: "loc_SANITIZED",
+        pipelineId: "pipe_NEW_LEAD_TO_ONBOARDING",
+        limit: 2,
+        page: 1
+      });
+
+      assert.equal(bodies.length, 1);
+      assert.equal(bodies[0].locationId, "loc_SANITIZED");
+      assert.equal(bodies[0].pipelineId, "pipe_NEW_LEAD_TO_ONBOARDING");
+      assert.equal(bodies[0].limit, 2);
+      assert.equal(bodies[0].page, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

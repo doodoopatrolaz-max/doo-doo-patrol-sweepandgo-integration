@@ -65,6 +65,7 @@ export class GoHighLevelClient {
       method: "POST",
       body: {
         locationId: input.locationId,
+        pipelineId: input.pipelineId,
         limit: input.limit ?? 25,
         page: input.page ?? 1
       }

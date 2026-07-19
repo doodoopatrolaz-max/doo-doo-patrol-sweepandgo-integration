@@ -144,20 +144,20 @@ function renderSummary(summary: DashboardSummary): string {
       note: summary.lifetimeValueReason
     },
     {
-      label: "Average Revenue Per Service Hour",
+      label: "Revenue Per Recurring Service Hour",
       value: maybeMoney(summary.averageRevenuePerHour),
       note: summary.averageRevenuePerHourReason,
       breakdown: [
-        { label: "Service Hrs", value: String(summary.revenuePerHourMetrics.serviceHours) },
+        { label: "Recurring Hrs", value: String(summary.revenuePerHourMetrics.serviceHours) },
         { label: "Revenue", value: money(summary.revenuePerHourMetrics.serviceRevenue) }
       ]
     },
     {
-      label: "Average Revenue Per Shift Hour",
+      label: "Revenue Per Recurring Shift Hour",
       value: maybeMoney(summary.averageRevenuePerShiftHour),
       note: summary.averageRevenuePerShiftHourReason,
       breakdown: [
-        { label: "Shift Hrs", value: String(summary.revenuePerShiftHourMetrics.shiftHours) },
+        { label: "Adjusted Shift Hrs", value: String(summary.revenuePerShiftHourMetrics.shiftHours) },
         { label: "Revenue", value: money(summary.revenuePerShiftHourMetrics.serviceRevenue) }
       ]
     },
@@ -198,14 +198,17 @@ function renderServiceProductivity(summary: DashboardSummary): string {
   const metrics = summary.revenuePerHourMetrics;
   return `
     <div class="productivity-panel">
-      <h3>Service Productivity</h3>
+      <h3>Recurring Route Productivity</h3>
       <div class="mini-stats">
         ${[
-          ["Completed stops", String(metrics.completedStops)],
-          ["Revenue / stop", maybeMoney(metrics.revenuePerStop)],
-          ["Avg min / stop", metrics.averageMinutesPerStop === null ? "No data" : String(metrics.averageMinutesPerStop)],
-          ["Scooping revenue", money(metrics.scoopingRevenue)],
-          ["Spray revenue", money(metrics.sprayRevenue)],
+          ["Recurring stops", String(metrics.completedStops)],
+          ["Adjusted recurring service hours", String(metrics.serviceHours)],
+          ["Adjusted recurring shift hours", String(summary.revenuePerShiftHourMetrics.shiftHours)],
+          ["Recurring service revenue", money(metrics.serviceRevenue)],
+          ["Revenue / recurring stop", maybeMoney(metrics.revenuePerStop)],
+          ["Avg min / recurring stop", metrics.averageMinutesPerStop === null ? "No data" : String(metrics.averageMinutesPerStop)],
+          ["Recurring scooping revenue", money(metrics.scoopingRevenue)],
+          ["Recurring spray revenue", money(metrics.sprayRevenue)],
           ["Same-stop scoop/spray", String(metrics.scoopSprayCombinedStopGroups)]
         ].map(([label, value]) => `
           <div>
@@ -214,6 +217,7 @@ function renderServiceProductivity(summary: DashboardSummary): string {
           </div>
         `).join("")}
       </div>
+      <p class="panel-note">Initial and one-time cleanup jobs are excluded from recurring productivity.</p>
     </div>
   `;
 }
@@ -450,6 +454,7 @@ function pageShell(input: { title: string; body: string }): string {
     .mini-stats div { background:var(--soft); border-radius:8px; padding:10px; }
     .mini-stats span { display:block; color:#557083; font-size:.78rem; font-weight:800; }
     .mini-stats strong { display:block; margin-top:4px; color:var(--navy); font-size:1rem; overflow-wrap:anywhere; }
+    .panel-note { margin:10px 0 0; color:#557083; font-size:.82rem; }
     .notes p { margin:4px 0; }
     .grid-two { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; }

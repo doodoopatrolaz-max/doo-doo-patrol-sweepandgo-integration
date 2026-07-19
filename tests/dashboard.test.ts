@@ -319,6 +319,15 @@ const summaryOnlyDataSource: DashboardDataSource = {
         zeroDurationRowsAttachedToValidStop: 0,
         zeroDurationRowsExcluded: 0,
         missingPriceRows: 0,
+        nonRecurringRowsExcluded: 0,
+        initialCleanupRowsExcluded: 0,
+        oneTimeCleanupRowsExcluded: 0,
+        customNonRecurringRowsExcluded: 0,
+        unknownClassificationRowsExcluded: 0,
+        nonRecurringServiceHoursExcluded: 0,
+        initialCleanupHoursExcluded: 0,
+        oneTimeCleanupHoursExcluded: 0,
+        customNonRecurringHoursExcluded: 0,
         serviceRevenue: 0,
         serviceHours: 0,
         completedJobs: 0,
@@ -339,6 +348,10 @@ const summaryOnlyDataSource: DashboardDataSource = {
       revenuePerShiftHourMetrics: {
         serviceRevenue: 0,
         shiftHours: 0,
+        unadjustedShiftHours: 0,
+        initialCleanupHoursSubtracted: 0,
+        oneTimeCleanupHoursSubtracted: 0,
+        otherNonRecurringHoursSubtracted: 0,
         rawShiftRows: 0,
         dedupedShiftRows: 0,
         duplicateShiftRowsExcluded: 0,
@@ -455,8 +468,8 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.churnRateDenominator, 20);
     assert.equal(summary.lifetimeValue, 1900);
     assert.equal(summary.averageRevenuePerHour, 160);
-    assert.equal(summary.averageRevenuePerHourReason, "Completed priced job revenue divided by KPI service time. Skipped, missed, canceled, and zero-minute rows do not add service time; same-stop scoop/spray revenue stays included.");
-    assert(summary.dataNotes.includes("Average Revenue Per Service Hour uses completed priced job revenue divided by KPI-eligible recorded service time. Zero-minute same-stop spray revenue is included, but zero-minute rows do not add service time; missing-price jobs are flagged."));
+    assert.equal(summary.averageRevenuePerHourReason, "Recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded.");
+    assert(summary.dataNotes.includes("Revenue Per Recurring Service Hour uses recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded."));
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
     assert.equal(summary.revenuePerHourMetrics.serviceHours, 0.5);
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
@@ -517,8 +530,8 @@ describe("dashboard KPI aggregation", () => {
     assert(html.indexOf("Close Rate") < html.indexOf("Churn Rate"));
     assert(html.indexOf("Churn Rate") < html.indexOf("Average Monthly Ticket"));
     assert(html.indexOf("Average Monthly Ticket") < html.indexOf("Lifetime Value"));
-    assert(html.indexOf("Lifetime Value") < html.indexOf("Average Revenue Per Service Hour"));
-    assert(html.indexOf("Average Revenue Per Service Hour") < html.indexOf("Net Customer Growth"));
+    assert(html.indexOf("Lifetime Value") < html.indexOf("Revenue Per Recurring Service Hour"));
+    assert(html.indexOf("Revenue Per Recurring Service Hour") < html.indexOf("Net Customer Growth"));
     assert(html.indexOf("Net Customer Growth") < html.indexOf("Total Ad Spend"));
     assert(html.indexOf("Total Ad Spend") < html.indexOf("Meta Spend"));
     assert(!html.includes("<span>Estimated MRR</span>"));
@@ -772,51 +785,60 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.priorPeriodLeadConversions, 0);
   });
 
-  it("calculates average revenue per service hour from completed Sweep&Go job rows", () => {
+  it("calculates recurring revenue per service hour from completed Sweep&Go job rows", () => {
     const metrics = calculateCompletedJobRevenueMetrics([
       completedJobRow({ client_id: "same-yard", price: "60.00", duration: "00:30", type: "recurring" }),
       completedJobRow({ client_id: "same-yard", price: "20.00", duration: "00:00", pricing_plan_name: "Fresh Poo" }),
       completedJobRow({ client_id: "skipped-yard", price: "50.00", duration: "00:10", status_name: "skipped" }),
       completedJobRow({ client_id: "missed-yard", price: "50.00", duration: "00:10", status_name: "missed" }),
-      completedJobRow({ client_id: "free-initial", price: "0.00", duration: "01:00", type: "initial" })
+      completedJobRow({ client_id: "free-initial", price: "0.00", duration: "01:00", type: "initial" }),
+      completedJobRow({ client_id: "one-time-yard", price: "120.00", duration: "00:45", type: "one_time" }),
+      completedJobRow({ client_id: "custom-yard", price: "40.00", duration: "00:15", type: "custom" })
     ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
 
     assert.equal(metrics.status, "available");
     assert.equal(metrics.serviceRevenue, 80);
-    assert.equal(metrics.serviceHours, 1.5);
-    assert.equal(metrics.completedStops, 2);
-    assert.equal(metrics.completedJobs, 3);
-    assert.equal(metrics.rawCompletedJobRows, 5);
-    assert.equal(metrics.eligibleRows, 3);
+    assert.equal(metrics.serviceHours, 0.5);
+    assert.equal(metrics.completedStops, 1);
+    assert.equal(metrics.completedJobs, 2);
+    assert.equal(metrics.rawCompletedJobRows, 7);
+    assert.equal(metrics.eligibleRows, 2);
     assert.equal(metrics.excludedRows, 2);
-    assert.equal(metrics.sameStopGroupsCreated, 2);
+    assert.equal(metrics.nonRecurringRowsExcluded, 3);
+    assert.equal(metrics.initialCleanupRowsExcluded, 1);
+    assert.equal(metrics.oneTimeCleanupRowsExcluded, 1);
+    assert.equal(metrics.customNonRecurringRowsExcluded, 1);
+    assert.equal(metrics.initialCleanupHoursExcluded, 1);
+    assert.equal(metrics.oneTimeCleanupHoursExcluded, 0.75);
+    assert.equal(metrics.customNonRecurringHoursExcluded, 0.25);
+    assert.equal(metrics.sameStopGroupsCreated, 1);
     assert.equal(metrics.scoopSprayCombinedStopGroups, 1);
-    assert.equal(metrics.pricedCompletedJobs, 3);
-    assert.equal(metrics.timedCompletedJobs, 2);
+    assert.equal(metrics.pricedCompletedJobs, 2);
+    assert.equal(metrics.timedCompletedJobs, 1);
     assert.equal(metrics.zeroDurationRevenueJobs, 1);
     assert.equal(metrics.zeroDurationRows, 1);
     assert.equal(metrics.zeroDurationRowsAttachedToValidStop, 1);
     assert.equal(metrics.zeroDurationRowsExcluded, 0);
     assert.equal(metrics.scoopingRevenue, 60);
     assert.equal(metrics.sprayRevenue, 20);
-    assert.equal(metrics.revenuePerStop, 40);
-    assert.equal(metrics.averageMinutesPerStop, 45);
+    assert.equal(metrics.revenuePerStop, 80);
+    assert.equal(metrics.averageMinutesPerStop, 30);
   });
 
-  it("excludes completed missing-price jobs from revenue while keeping usable service time", () => {
+  it("excludes completed missing-price jobs from recurring revenue and service time", () => {
     const metrics = calculateCompletedJobRevenueMetrics([
       completedJobRow({ client_id: "priced-yard", price: "80.00", duration: "00:40", type: "recurring" }),
-      completedJobRow({ client_id: "missing-price-yard", duration: "00:20", type: "one_time" })
+      completedJobRow({ client_id: "missing-price-yard", duration: "00:20", type: "recurring" })
     ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
 
     assert.equal(metrics.status, "available");
     assert.equal(metrics.serviceRevenue, 80);
-    assert.equal(metrics.serviceHours, 1);
+    assert.equal(metrics.serviceHours, 0.67);
     assert.equal(metrics.missingPriceRows, 1);
-    assert.equal(metrics.completedStops, 2);
+    assert.equal(metrics.completedStops, 1);
     assert.equal(metrics.pricedCompletedJobs, 1);
-    assert.equal(metrics.timedCompletedJobs, 2);
-    assert.equal(metrics.revenuePerStop, 40);
+    assert.equal(metrics.timedCompletedJobs, 1);
+    assert.equal(metrics.revenuePerStop, 80);
   });
 
   it("uses stored completed job facts for dashboard service-hour revenue when available", async () => {
@@ -861,11 +883,139 @@ describe("dashboard KPI aggregation", () => {
       { technician: "Bryan Long", hours: 1.5 }
     ]);
     assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 3.5);
+    assert.equal(summary.revenuePerShiftHourMetrics.unadjustedShiftHours, 3.5);
     assert.equal(summary.averageRevenuePerShiftHour, 22.86);
-    assert.equal(summary.averageRevenuePerShiftHourReason, "Completed priced job revenue divided by recorded Sweep&Go shift hours, including route, drive, break, and admin time captured in shifts.");
-    assert(summary.dataNotes.includes("Average Revenue Per Shift Hour uses completed priced job revenue divided by deduped Sweep&Go Time & Mileage shift hours, including route, drive, break, and admin time captured in shifts."));
-    assert(html.includes("Average Revenue Per Shift Hour"));
-    assert(html.includes("Service Productivity"));
+    assert.equal(summary.averageRevenuePerShiftHourReason, "Recurring completed job revenue divided by recorded shift hours after removing initial and one-time cleanup job time. Includes route, drive, break, and admin time for normal recurring work.");
+    assert(summary.dataNotes.includes("Revenue Per Recurring Shift Hour uses recurring completed job revenue divided by deduped Sweep&Go shift hours after subtracting initial, one-time, and custom cleanup job time."));
+    assert(html.includes("Revenue Per Recurring Shift Hour"));
+    assert(html.includes("Recurring Route Productivity"));
+  });
+
+  it("subtracts non-recurring cleanup duration from recurring shift-hour productivity", async () => {
+    class NonRecurringShiftPool extends CompletedJobsWithShiftPool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM sweepandgo_completed_jobs")) {
+          return {
+            rows: [
+              {
+                serviceDate: "2026-07-01",
+                technicianKey: "tech-1",
+                stopFingerprint: "recurring-stop",
+                jobStatus: "completed",
+                jobType: "recurring",
+                allocatedServicePrice: 80,
+                recordedDurationMinutes: 60,
+                isSpray: false,
+                isInitial: false
+              },
+              {
+                serviceDate: "2026-07-01",
+                technicianKey: "tech-1",
+                stopFingerprint: "initial-stop",
+                jobStatus: "completed",
+                jobType: "initial",
+                allocatedServicePrice: 150,
+                recordedDurationMinutes: 60,
+                isSpray: false,
+                isInitial: true
+              },
+              {
+                serviceDate: "2026-07-01",
+                technicianKey: "tech-1",
+                stopFingerprint: "one-time-stop",
+                jobStatus: "completed",
+                jobType: "one_time",
+                allocatedServicePrice: 120,
+                recordedDurationMinutes: 30,
+                isSpray: false,
+                isInitial: false
+              },
+              {
+                serviceDate: "2026-07-01",
+                technicianKey: "tech-1",
+                stopFingerprint: "custom-stop",
+                jobStatus: "completed",
+                jobType: "custom",
+                allocatedServicePrice: 40,
+                recordedDurationMinutes: 30,
+                isSpray: false,
+                isInitial: false
+              }
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new NonRecurringShiftPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
+    assert.equal(summary.revenuePerHourMetrics.serviceHours, 1);
+    assert.equal(summary.revenuePerHourMetrics.initialCleanupHoursExcluded, 1);
+    assert.equal(summary.revenuePerHourMetrics.oneTimeCleanupHoursExcluded, 0.5);
+    assert.equal(summary.revenuePerHourMetrics.customNonRecurringHoursExcluded, 0.5);
+    assert.equal(summary.revenuePerShiftHourMetrics.unadjustedShiftHours, 3.5);
+    assert.equal(summary.revenuePerShiftHourMetrics.initialCleanupHoursSubtracted, 1);
+    assert.equal(summary.revenuePerShiftHourMetrics.oneTimeCleanupHoursSubtracted, 0.5);
+    assert.equal(summary.revenuePerShiftHourMetrics.otherNonRecurringHoursSubtracted, 0.5);
+    assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 1.5);
+    assert.equal(summary.averageRevenuePerShiftHour, 53.33);
+  });
+
+  it("keeps adjusted recurring shift hours from going negative", async () => {
+    class NegativeAdjustmentPool extends CompletedJobsWithShiftPool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM sweepandgo_completed_jobs")) {
+          return {
+            rows: [
+              {
+                serviceDate: "2026-07-01",
+                technicianKey: "tech-1",
+                stopFingerprint: "recurring-stop",
+                jobStatus: "completed",
+                jobType: "recurring",
+                allocatedServicePrice: 80,
+                recordedDurationMinutes: 15,
+                isSpray: false,
+                isInitial: false
+              },
+              {
+                serviceDate: "2026-07-01",
+                technicianKey: "tech-1",
+                stopFingerprint: "initial-stop",
+                jobStatus: "completed",
+                jobType: "initial",
+                allocatedServicePrice: 150,
+                recordedDurationMinutes: 300,
+                isSpray: false,
+                isInitial: true
+              }
+            ]
+          };
+        }
+        if (sql.includes("event_type IN ('payroll:shift_info'")) {
+          return {
+            rows: [
+              payrollShiftRow({ employee_id: 9638, shift_id: 101, shift_date: "2026-07-01", duration_time: 60 }, "2026-07-01T18:00:00.000Z")
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new NegativeAdjustmentPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(summary.revenuePerShiftHourMetrics.unadjustedShiftHours, 1);
+    assert.equal(summary.revenuePerShiftHourMetrics.initialCleanupHoursSubtracted, 5);
+    assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 0);
+    assert.equal(summary.averageRevenuePerShiftHour, null);
+    assert.equal(summary.revenuePerShiftHourMetrics.status, "unavailable");
   });
 
   it("uses safe cost per new customer display rules", async () => {

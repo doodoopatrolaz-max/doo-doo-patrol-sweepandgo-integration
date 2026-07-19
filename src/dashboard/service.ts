@@ -152,13 +152,13 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         : "Average Monthly Ticket divided by Monthly Churn Rate.",
       averageRevenuePerHour,
       averageRevenuePerHourReason: averageRevenuePerHour === null
-        ? (revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.")
-        : "Completed priced job revenue divided by KPI service time. Skipped, missed, canceled, and zero-minute rows do not add service time; same-stop scoop/spray revenue stays included.",
+        ? (revenuePerHourMetrics.unavailableReason ?? "Revenue Per Recurring Service Hour unavailable until stored Sweep&Go completed job rows include recurring service revenue and duration.")
+        : "Recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded.",
       revenuePerHourMetrics,
       averageRevenuePerShiftHour,
       averageRevenuePerShiftHourReason: averageRevenuePerShiftHour === null
-        ? (revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour unavailable until stored Sweep&Go payroll shift rows include usable shift duration.")
-        : "Completed priced job revenue divided by recorded Sweep&Go shift hours, including route, drive, break, and admin time captured in shifts.",
+        ? (revenuePerShiftHourMetrics.unavailableReason ?? "Revenue Per Recurring Shift Hour unavailable until stored Sweep&Go payroll shift rows include usable shift duration.")
+        : "Recurring completed job revenue divided by recorded shift hours after removing initial and one-time cleanup job time. Includes route, drive, break, and admin time for normal recurring work.",
       revenuePerShiftHourMetrics,
       priorPeriodLeadConversions,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
@@ -693,6 +693,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       return {
         serviceRevenue: revenuePerHourMetrics.serviceRevenue,
         shiftHours: 0,
+        unadjustedShiftHours: 0,
+        initialCleanupHoursSubtracted: 0,
+        oneTimeCleanupHoursSubtracted: 0,
+        otherNonRecurringHoursSubtracted: 0,
         rawShiftRows,
         dedupedShiftRows: 0,
         duplicateShiftRowsExcluded: 0,
@@ -707,7 +711,17 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       .map(parsePayrollShiftRow)
       .filter((shift) => shift.shiftDate && shift.shiftDate >= range.startDate && shift.shiftDate <= range.endDate));
     const shiftMinutes = dedupedShifts.reduce((sum, shift) => sum + (shift.durationMinutes ?? 0), 0);
-    const shiftHours = roundMoney(shiftMinutes / 60);
+    const unadjustedShiftHours = roundMoney(shiftMinutes / 60);
+    const initialCleanupHoursSubtracted = revenuePerHourMetrics.initialCleanupHoursExcluded;
+    const oneTimeCleanupHoursSubtracted = revenuePerHourMetrics.oneTimeCleanupHoursExcluded;
+    const otherNonRecurringHoursSubtracted = revenuePerHourMetrics.customNonRecurringHoursExcluded;
+    const shiftHours = roundMoney(Math.max(
+      0,
+      unadjustedShiftHours
+        - initialCleanupHoursSubtracted
+        - oneTimeCleanupHoursSubtracted
+        - otherNonRecurringHoursSubtracted
+    ));
     const dedupedShiftRows = dedupedShifts.length;
     const technicianShiftHours = technicianShiftHourBreakdown(dedupedShifts);
     const revenuePerShiftHour = revenuePerHourMetrics.serviceRevenue > 0 && shiftHours > 0
@@ -717,6 +731,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     return {
       serviceRevenue: revenuePerHourMetrics.serviceRevenue,
       shiftHours,
+      unadjustedShiftHours,
+      initialCleanupHoursSubtracted,
+      oneTimeCleanupHoursSubtracted,
+      otherNonRecurringHoursSubtracted,
       rawShiftRows,
       dedupedShiftRows,
       duplicateShiftRowsExcluded: rawShiftRows - dedupedShiftRows,
@@ -724,7 +742,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       revenuePerShiftHour,
       status: revenuePerShiftHour === null ? "unavailable" : "available",
       unavailableReason: revenuePerShiftHour === null
-        ? "Stored Sweep&Go payroll shift rows did not include usable positive shift duration."
+        ? "Adjusted recurring shift hours were not positive after removing non-recurring cleanup time."
         : undefined
     };
   }
@@ -829,7 +847,7 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       lifetimeValue: null,
       lifetimeValueReason: "Lifetime value unavailable when churn is zero or unavailable.",
       averageRevenuePerHour: null,
-      averageRevenuePerHourReason: "Average Revenue Per Service Hour unavailable because no database connection is configured.",
+      averageRevenuePerHourReason: "Revenue Per Recurring Service Hour unavailable because no database connection is configured.",
       revenuePerHourMetrics: {
         rawCompletedJobRows: 0,
         eligibleRows: 0,
@@ -840,6 +858,15 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
         zeroDurationRowsAttachedToValidStop: 0,
         zeroDurationRowsExcluded: 0,
         missingPriceRows: 0,
+        nonRecurringRowsExcluded: 0,
+        initialCleanupRowsExcluded: 0,
+        oneTimeCleanupRowsExcluded: 0,
+        customNonRecurringRowsExcluded: 0,
+        unknownClassificationRowsExcluded: 0,
+        nonRecurringServiceHoursExcluded: 0,
+        initialCleanupHoursExcluded: 0,
+        oneTimeCleanupHoursExcluded: 0,
+        customNonRecurringHoursExcluded: 0,
         serviceRevenue: 0,
         serviceHours: 0,
         completedJobs: 0,
@@ -856,10 +883,14 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
         unavailableReason: "No database connection is configured."
       },
       averageRevenuePerShiftHour: null,
-      averageRevenuePerShiftHourReason: "Average Revenue Per Shift Hour unavailable because no database connection is configured.",
+      averageRevenuePerShiftHourReason: "Revenue Per Recurring Shift Hour unavailable because no database connection is configured.",
       revenuePerShiftHourMetrics: {
         serviceRevenue: 0,
         shiftHours: 0,
+        unadjustedShiftHours: 0,
+        initialCleanupHoursSubtracted: 0,
+        oneTimeCleanupHoursSubtracted: 0,
+        otherNonRecurringHoursSubtracted: 0,
         rawShiftRows: 0,
         dedupedShiftRows: 0,
         duplicateShiftRowsExcluded: 0,
@@ -987,15 +1018,16 @@ function dataNotes(input: {
     notes.push("Lifetime Value uses Average Monthly Ticket divided by Monthly Churn Rate; it is unavailable when churn is zero or unavailable.");
   }
   if (input.revenuePerHourMetrics.status !== "available") {
-    notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour is unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.");
+    notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Revenue Per Recurring Service Hour is unavailable until stored Sweep&Go completed job rows include recurring service revenue and duration.");
   } else {
-    notes.push("Average Revenue Per Service Hour uses completed priced job revenue divided by KPI-eligible recorded service time. Zero-minute same-stop spray revenue is included, but zero-minute rows do not add service time; missing-price jobs are flagged.");
+    notes.push("Revenue Per Recurring Service Hour uses recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded.");
   }
   if (input.revenuePerShiftHourMetrics.status !== "available") {
-    notes.push(input.revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour is unavailable until stored Sweep&Go payroll shift rows include usable shift duration.");
+    notes.push(input.revenuePerShiftHourMetrics.unavailableReason ?? "Revenue Per Recurring Shift Hour is unavailable until stored Sweep&Go payroll shift rows include usable shift duration.");
   } else {
-    notes.push("Average Revenue Per Shift Hour uses completed priced job revenue divided by deduped Sweep&Go Time & Mileage shift hours, including route, drive, break, and admin time captured in shifts.");
+    notes.push("Revenue Per Recurring Shift Hour uses recurring completed job revenue divided by deduped Sweep&Go shift hours after subtracting initial, one-time, and custom cleanup job time.");
   }
+  notes.push("Initial and one-time cleanup jobs are excluded from recurring productivity.");
   if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {
     notes.push(`${input.closeRateMetrics.totalPriorPeriodLeadConversions} conversion(s) in this range came from leads created before the selected period; they do not increase the selected-period lead count.`);
   }

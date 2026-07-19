@@ -96,6 +96,15 @@ export type DashboardRevenuePerHourMetrics = {
   zeroDurationRowsAttachedToValidStop: number;
   zeroDurationRowsExcluded: number;
   missingPriceRows: number;
+  nonRecurringRowsExcluded: number;
+  initialCleanupRowsExcluded: number;
+  oneTimeCleanupRowsExcluded: number;
+  customNonRecurringRowsExcluded: number;
+  unknownClassificationRowsExcluded: number;
+  nonRecurringServiceHoursExcluded: number;
+  initialCleanupHoursExcluded: number;
+  oneTimeCleanupHoursExcluded: number;
+  customNonRecurringHoursExcluded: number;
   serviceRevenue: number;
   serviceHours: number;
   completedJobs: number;
@@ -115,6 +124,10 @@ export type DashboardRevenuePerHourMetrics = {
 export type DashboardRevenuePerShiftHourMetrics = {
   serviceRevenue: number;
   shiftHours: number;
+  unadjustedShiftHours: number;
+  initialCleanupHoursSubtracted: number;
+  oneTimeCleanupHoursSubtracted: number;
+  otherNonRecurringHoursSubtracted: number;
   rawShiftRows: number;
   dedupedShiftRows: number;
   duplicateShiftRowsExcluded: number;

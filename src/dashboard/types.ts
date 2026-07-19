@@ -9,12 +9,14 @@ export type DashboardSummary = {
   facebookLeads: number;
   websiteLeads: number;
   otherLeads: number;
+  leadBreakdown: DashboardSourceBreakdown;
   totalLeads: number;
   totalActiveClients: number | null;
   totalActiveClientsSource: string;
   totalActiveClientsAsOf?: string;
   totalActiveClientsNeedsVerification: boolean;
   newRecurringCustomers: number;
+  newRecurringCustomerBreakdown: DashboardSourceBreakdown;
   costPerLead: number | null;
   costPerNewRecurringCustomer: number | null;
   costPerNewRecurringCustomerStatus: DashboardCostPerNewCustomerStatus;
@@ -25,6 +27,7 @@ export type DashboardSummary = {
   averageMonthlyTicketReason?: string;
   estimatedMrrAdded: number | null;
   cancellations: number;
+  cancellationMetrics: DashboardCancellationMetrics;
   churnRate: number | null;
   churnRateDenominator: number;
   churnRateReason?: string;
@@ -37,6 +40,23 @@ export type DashboardSummary = {
   closeRate: number | null;
   closeRateMetrics: DashboardCloseRateMetrics;
   dataNotes: string[];
+};
+
+export type DashboardSourceBreakdown = {
+  facebook: number;
+  website: number;
+  other: number;
+  unknown: number;
+};
+
+export type DashboardCancellationMetrics = {
+  countedCancellations: number;
+  rawCancellationRows: number;
+  uniqueCancellationCandidates: number;
+  duplicateRowsExcluded: number;
+  subscriptionOnlyActiveExcluded: number;
+  pauseRowsExcluded: number;
+  needsReview: number;
 };
 
 export type DashboardAdProviderStatus = {

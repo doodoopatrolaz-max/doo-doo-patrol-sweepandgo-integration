@@ -2,10 +2,12 @@ import { enumerateDates, type DashboardDateRange } from "./dateRange.ts";
 import type {
   DashboardCampaignRow,
   DashboardAdProviderStatus,
+  DashboardCancellationMetrics,
   DashboardCloseRateMetrics,
   DashboardCostPerNewCustomerStatus,
   DashboardDataSource,
   DashboardRevenuePerHourMetrics,
+  DashboardSourceBreakdown,
   DashboardSourceRow,
   DashboardSources,
   DashboardSummary,
@@ -20,6 +22,25 @@ type Queryable = {
 const SOURCES: DashboardSourceRow["source"][] = ["facebook", "website", "other", "unknown"];
 const DASHBOARD_LEAD_EXCLUSION_METRICS = "ARRAY['lead_denominator', 'dashboard_leads']";
 export const TEMP_AVERAGE_MONTHLY_TICKET = 95;
+const OWNER_CONFIRMED_CHURN_BASELINES = [
+  {
+    startDate: "2026-07-01",
+    endDate: "2026-07-31",
+    activeCustomersAtStart: 252,
+    note: "July churn uses owner-confirmed starting active count of 252 because historical active roster snapshot was not available."
+  }
+] as const;
+
+type NewRecurringCustomerMetrics = {
+  total: number;
+  mrrAdded: number | null;
+  bySource: DashboardSourceBreakdown;
+};
+
+type ChurnDenominator = {
+  count: number;
+  note?: string;
+};
 
 export class PostgresDashboardDataSource implements DashboardDataSource {
   private readonly pool: Queryable;
@@ -51,15 +72,17 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.googleAdsStatus()
     ]);
 
-    const facebookLeads = leads.facebook;
-    const websiteLeads = leads.website;
-    const otherLeads = leads.other + leads.unknown;
+    const leadBreakdown = { ...leads };
+    const recurringBreakdown = { ...customers.bySource };
+    const facebookLeads = leadBreakdown.facebook;
+    const websiteLeads = leadBreakdown.website;
+    const otherLeads = leadBreakdown.other + leadBreakdown.unknown;
     const totalLeads = facebookLeads + websiteLeads + otherLeads;
     const newRecurringCustomers = customers.total;
     const totalAdSpend = adSpend.meta + adSpend.google;
     const estimatedMrrAdded = customers.mrrAdded === null ? null : roundMoney(customers.mrrAdded);
     const costPerNewCustomer = costPerNewRecurringCustomer(totalAdSpend, newRecurringCustomers);
-    const churnRate = churnDenominator > 0 ? percentage(cancellations, churnDenominator) : null;
+    const churnRate = churnDenominator.count > 0 ? percentage(cancellations.countedCancellations, churnDenominator.count) : null;
     const churnRateDecimal = churnRate === null ? null : churnRate / 100;
     const lifetimeValue = churnRateDecimal && churnRateDecimal > 0
       ? roundMoney(TEMP_AVERAGE_MONTHLY_TICKET / churnRateDecimal)
@@ -81,12 +104,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       facebookLeads,
       websiteLeads,
       otherLeads,
+      leadBreakdown,
       totalLeads,
       totalActiveClients: activeCustomers.asOf ? activeCustomers.activeClients : null,
       totalActiveClientsSource: activeCustomers.source,
       totalActiveClientsAsOf: activeCustomers.asOf,
       totalActiveClientsNeedsVerification: activeCustomers.needsVerification,
       newRecurringCustomers,
+      newRecurringCustomerBreakdown: recurringBreakdown,
       costPerLead: totalLeads > 0 ? roundMoney(totalAdSpend / totalLeads) : null,
       costPerNewRecurringCustomer: costPerNewCustomer.value,
       costPerNewRecurringCustomerStatus: costPerNewCustomer.status,
@@ -96,11 +121,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       averageMonthlyTicket: TEMP_AVERAGE_MONTHLY_TICKET,
       averageMonthlyTicketReason: "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.",
       estimatedMrrAdded,
-      cancellations,
+      cancellations: cancellations.countedCancellations,
+      cancellationMetrics: cancellations,
       churnRate,
-      churnRateDenominator: churnDenominator,
-      churnRateReason: churnDenominator > 0
-        ? `Cancellations divided by ${churnDenominator} customers active at the start of the selected range.`
+      churnRateDenominator: churnDenominator.count,
+      churnRateReason: churnDenominator.count > 0
+        ? `${cancellations.countedCancellations} counted cancellations divided by ${churnDenominator.count} customers active at the start of the selected range.`
         : "Churn unavailable because customers active at the start of the selected range could not be calculated.",
       lifetimeValue,
       lifetimeValueReason: lifetimeValue === null
@@ -111,7 +137,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         ? "Average Revenue Per Hour unavailable until stored accepted-payment events and payroll shift hours both cover the selected range."
         : "Accepted payment revenue divided by payroll shift labor hours from stored Sweep&Go webhook data.",
       revenuePerHourMetrics,
-      netRecurringCustomerGrowth: newRecurringCustomers - cancellations,
+      netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
       closeRate: closeRateMetrics.totalCloseRate,
       closeRateMetrics,
       dataNotes: dataNotes({
@@ -122,6 +148,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         lifetimeValue,
         revenuePerHourMetrics,
         closeRateMetrics,
+        churnDenominatorNote: churnDenominator.note,
+        cancellationMetrics: cancellations,
         costPerNewRecurringCustomerStatus: costPerNewCustomer.status,
         costPerNewRecurringCustomerNote: costPerNewCustomer.note,
         sweepAndGoLiveWebhookProcessingActive: true
@@ -384,19 +412,24 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     return sourceCountMap(result.rows, "source", "count");
   }
 
-  private async newRecurringCustomers(range: DashboardDateRange): Promise<{ total: number; mrrAdded: number | null }> {
+  private async newRecurringCustomers(range: DashboardDateRange): Promise<NewRecurringCustomerMetrics> {
     const result = await this.pool.query(
-      `SELECT COUNT(*)::int AS count,
+      `SELECT COALESCE(source, 'unknown') AS source,
+              COUNT(*)::int AS count,
               SUM(monthly_recurring_revenue)::float AS mrr_added,
               COUNT(monthly_recurring_revenue)::int AS priced_count
        FROM customers
-       WHERE first_recurring_date BETWEEN $1::date AND $2::date`,
+       WHERE first_recurring_date BETWEEN $1::date AND $2::date
+       GROUP BY COALESCE(source, 'unknown')`,
       [range.startDate, range.endDate]
     );
-    const row = result.rows[0] ?? {};
+    const bySource = sourceCountMap(result.rows, "source", "count");
+    const pricedCount = result.rows.reduce((sum, row) => sum + integerValue(row.priced_count), 0);
+    const mrrAdded = result.rows.reduce((sum, row) => sum + numberValue(row.mrr_added), 0);
     return {
-      total: integerValue(row.count),
-      mrrAdded: integerValue(row.priced_count) > 0 ? numberValue(row.mrr_added) : null
+      total: bySource.facebook + bySource.website + bySource.other + bySource.unknown,
+      mrrAdded: pricedCount > 0 ? mrrAdded : null,
+      bySource
     };
   }
 
@@ -478,17 +511,81 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     };
   }
 
-  private async cancellations(range: DashboardDateRange): Promise<number> {
+  private async cancellations(range: DashboardDateRange): Promise<DashboardCancellationMetrics> {
     const result = await this.pool.query(
-      `SELECT COUNT(*)::int AS count
-       FROM cancellations
-       WHERE cancelled_on BETWEEN $1::date AND $2::date`,
+      `WITH cancellation_rows AS (
+         SELECT
+           COALESCE(cn.customer_id::text, cn.external_sweepgo_id, cn.id::text) AS cancellation_key,
+           COALESCE(c.status, 'missing') AS customer_status,
+           COALESCE(cn.metadata->>'eventType', cn.metadata->>'event_type', '') AS event_type
+         FROM cancellations cn
+         LEFT JOIN customers c ON c.id = cn.customer_id
+         WHERE cn.cancelled_on BETWEEN $1::date AND $2::date
+       ),
+       grouped AS (
+         SELECT
+           cancellation_key,
+           MAX(customer_status) AS customer_status,
+           COUNT(*)::int AS row_count,
+           BOOL_OR(event_type ILIKE '%pause%') AS has_pause_signal
+         FROM cancellation_rows
+         GROUP BY cancellation_key
+       )
+       SELECT
+         COUNT(*) FILTER (WHERE customer_status = 'inactive')::int AS counted_cancellations,
+         COALESCE(SUM(row_count), 0)::int AS raw_cancellation_rows,
+         COUNT(*)::int AS unique_cancellation_candidates,
+         COALESCE(SUM(row_count - 1), 0)::int AS duplicate_rows_excluded,
+         COUNT(*) FILTER (WHERE customer_status = 'active')::int AS subscription_only_active_excluded,
+         COUNT(*) FILTER (WHERE has_pause_signal AND customer_status <> 'inactive')::int AS pause_rows_excluded,
+         COUNT(*) FILTER (WHERE customer_status NOT IN ('active', 'inactive'))::int AS needs_review
+       FROM grouped`,
       [range.startDate, range.endDate]
     );
-    return integerValue(result.rows[0]?.count);
+    const row = result.rows[0] ?? {};
+    return {
+      countedCancellations: integerValue(row.counted_cancellations),
+      rawCancellationRows: integerValue(row.raw_cancellation_rows),
+      uniqueCancellationCandidates: integerValue(row.unique_cancellation_candidates),
+      duplicateRowsExcluded: integerValue(row.duplicate_rows_excluded),
+      subscriptionOnlyActiveExcluded: integerValue(row.subscription_only_active_excluded),
+      pauseRowsExcluded: integerValue(row.pause_rows_excluded),
+      needsReview: integerValue(row.needs_review)
+    };
   }
 
-  private async activeCustomersAtRangeStart(range: DashboardDateRange): Promise<number> {
+  private async activeCustomersAtRangeStart(range: DashboardDateRange): Promise<ChurnDenominator> {
+    const snapshotTable = await this.pool.query("SELECT to_regclass('public.sweepandgo_active_roster_snapshots') AS table_name");
+    if (snapshotTable.rows[0]?.table_name) {
+      const snapshotResult = await this.pool.query(
+        `SELECT active_client_count,
+                snapshot_date::text AS snapshot_date
+         FROM sweepandgo_active_roster_snapshots
+         WHERE snapshot_date <= $1::date
+         ORDER BY snapshot_date DESC, updated_at DESC
+         LIMIT 1`,
+        [range.startDate]
+      );
+      const snapshot = snapshotResult.rows[0];
+      if (snapshot) {
+        const count = integerValue(snapshot.active_client_count);
+        return {
+          count,
+          note: `Churn denominator uses the Sweep&Go active roster snapshot from ${stringValue(snapshot.snapshot_date) ?? range.startDate}.`
+        };
+      }
+    }
+
+    const ownerBaseline = OWNER_CONFIRMED_CHURN_BASELINES.find((baseline) =>
+      range.startDate >= baseline.startDate && range.startDate <= baseline.endDate
+    );
+    if (ownerBaseline) {
+      return {
+        count: ownerBaseline.activeCustomersAtStart,
+        note: ownerBaseline.note
+      };
+    }
+
     const result = await this.pool.query(
       `SELECT COUNT(*)::int AS active_at_start
        FROM customers
@@ -497,7 +594,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          AND (cancellation_date IS NULL OR cancellation_date >= $1::date)`,
       [range.startDate]
     );
-    return integerValue(result.rows[0]?.active_at_start);
+    return {
+      count: integerValue(result.rows[0]?.active_at_start),
+      note: "Churn denominator uses BI customer first recurring and cancellation dates because no active roster snapshot was available for the selected start date."
+    };
   }
 
   private async revenuePerHourMetrics(range: DashboardDateRange): Promise<DashboardRevenuePerHourMetrics> {
@@ -649,11 +749,13 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       facebookLeads: 0,
       websiteLeads: 0,
       otherLeads: 0,
+      leadBreakdown: emptySourceBreakdown(),
       totalLeads: 0,
       totalActiveClients: null,
       totalActiveClientsSource: "No database connection is configured.",
       totalActiveClientsNeedsVerification: true,
       newRecurringCustomers: 0,
+      newRecurringCustomerBreakdown: emptySourceBreakdown(),
       costPerLead: null,
       costPerNewRecurringCustomer: 0,
       costPerNewRecurringCustomerStatus: "no_ad_spend",
@@ -664,6 +766,7 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       averageMonthlyTicketReason: "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.",
       estimatedMrrAdded: null,
       cancellations: 0,
+      cancellationMetrics: emptyCancellationMetrics(),
       churnRate: null,
       churnRateDenominator: 0,
       churnRateReason: "Churn unavailable because no database connection is configured.",
@@ -726,7 +829,7 @@ function sourceCountMap(
   sourceKey: string,
   countKey: string
 ): Record<DashboardSourceRow["source"], number> {
-  const output = { facebook: 0, website: 0, other: 0, unknown: 0 };
+  const output = emptySourceBreakdown();
   for (const row of rows) {
     const source = normalizeSource(row[sourceKey]);
     output[source] += integerValue(row[countKey]);
@@ -760,6 +863,8 @@ function dataNotes(input: {
   lifetimeValue: number | null;
   revenuePerHourMetrics: DashboardRevenuePerHourMetrics;
   closeRateMetrics: DashboardCloseRateMetrics;
+  churnDenominatorNote?: string;
+  cancellationMetrics: DashboardCancellationMetrics;
   costPerNewRecurringCustomerStatus: DashboardCostPerNewCustomerStatus;
   costPerNewRecurringCustomerNote: string;
   sweepAndGoLiveWebhookProcessingActive?: boolean;
@@ -782,6 +887,12 @@ function dataNotes(input: {
   notes.push(`Average Monthly Ticket is currently configured at $${TEMP_AVERAGE_MONTHLY_TICKET.toFixed(2)}.`);
   if (input.churnRate === null) {
     notes.push("Churn Rate is unavailable until customers active at the start of the selected range can be calculated.");
+  }
+  if (input.churnDenominatorNote) {
+    notes.push(input.churnDenominatorNote);
+  }
+  if (input.cancellationMetrics.rawCancellationRows !== input.cancellationMetrics.countedCancellations) {
+    notes.push(`Cancellation quality check: ${input.cancellationMetrics.countedCancellations} counted, ${input.cancellationMetrics.subscriptionOnlyActiveExcluded} active subscription-only candidates excluded, ${input.cancellationMetrics.duplicateRowsExcluded} duplicate rows excluded, ${input.cancellationMetrics.needsReview} candidate needs review.`);
   }
   if (input.lifetimeValue === null) {
     notes.push("Lifetime Value uses Average Monthly Ticket divided by Monthly Churn Rate; it is unavailable when churn is zero or unavailable.");
@@ -814,6 +925,22 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     websiteCloseRate: null,
     totalCloseRate: null,
     costPerNewCustomerStatus: "no_ad_spend"
+  };
+}
+
+function emptySourceBreakdown(): DashboardSourceBreakdown {
+  return { facebook: 0, website: 0, other: 0, unknown: 0 };
+}
+
+function emptyCancellationMetrics(): DashboardCancellationMetrics {
+  return {
+    countedCancellations: 0,
+    rawCancellationRows: 0,
+    uniqueCancellationCandidates: 0,
+    duplicateRowsExcluded: 0,
+    subscriptionOnlyActiveExcluded: 0,
+    pauseRowsExcluded: 0,
+    needsReview: 0
   };
 }
 

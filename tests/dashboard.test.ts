@@ -67,7 +67,17 @@ class FakePool {
       return { rows: [{ active_at_start: 20 }] };
     }
     if (sql.includes("FROM cancellations")) {
-      return { rows: [{ count: 1 }] };
+      return {
+        rows: [{
+          counted_cancellations: 1,
+          raw_cancellation_rows: 3,
+          unique_cancellation_candidates: 2,
+          duplicate_rows_excluded: 1,
+          subscription_only_active_excluded: 1,
+          pause_rows_excluded: 0,
+          needs_review: 0
+        }]
+      };
     }
     if (sql.includes("client_payment_accepted")) {
       return { rows: [{ payment_events: 4, revenue_collected: 570 }] };
@@ -186,12 +196,14 @@ const summaryOnlyDataSource: DashboardDataSource = {
       facebookLeads: 1,
       websiteLeads: 0,
       otherLeads: 0,
+      leadBreakdown: { facebook: 1, website: 0, other: 0, unknown: 0 },
       totalLeads: 1,
       totalActiveClients: 12,
       totalActiveClientsSource: "Sweep&Go BI customers where status is active and at least one recurring service is present.",
       totalActiveClientsAsOf: "2026-06-22T11:00:00.000Z",
       totalActiveClientsNeedsVerification: false,
       newRecurringCustomers: 0,
+      newRecurringCustomerBreakdown: { facebook: 0, website: 0, other: 0, unknown: 0 },
       costPerLead: 10,
       costPerNewRecurringCustomer: null,
       costPerNewRecurringCustomerStatus: "no_new_customers",
@@ -202,6 +214,15 @@ const summaryOnlyDataSource: DashboardDataSource = {
       averageMonthlyTicketReason: "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.",
       estimatedMrrAdded: null,
       cancellations: 0,
+      cancellationMetrics: {
+        countedCancellations: 0,
+        rawCancellationRows: 0,
+        uniqueCancellationCandidates: 0,
+        duplicateRowsExcluded: 0,
+        subscriptionOnlyActiveExcluded: 0,
+        pauseRowsExcluded: 0,
+        needsReview: 0
+      },
       churnRate: 0,
       churnRateDenominator: 12,
       churnRateReason: "Cancellations divided by 12 customers active at the start of the selected range.",
@@ -291,11 +312,13 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.facebookLeads, 3);
     assert.equal(summary.websiteLeads, 2);
     assert.equal(summary.otherLeads, 1);
+    assert.deepEqual(summary.leadBreakdown, { facebook: 3, website: 2, other: 1, unknown: 0 });
     assert.equal(summary.totalLeads, 6);
     assert.equal(summary.totalActiveClients, 4);
     assert.equal(summary.totalActiveClientsNeedsVerification, false);
     assert.equal(summary.totalActiveClientsAsOf, "2026-06-22T11:00:00.000Z");
     assert.equal(summary.newRecurringCustomers, 2);
+    assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 0, other: 0, unknown: 2 });
     assert.equal(summary.costPerLead, 25);
     assert.equal(summary.costPerNewRecurringCustomer, 75);
     assert.equal(summary.costPerNewRecurringCustomerStatus, "available");
@@ -304,6 +327,15 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.averageMonthlyTicket, 95);
     assert.equal(summary.estimatedMrrAdded, 60);
     assert.equal(summary.cancellations, 1);
+    assert.deepEqual(summary.cancellationMetrics, {
+      countedCancellations: 1,
+      rawCancellationRows: 3,
+      uniqueCancellationCandidates: 2,
+      duplicateRowsExcluded: 1,
+      subscriptionOnlyActiveExcluded: 1,
+      pauseRowsExcluded: 0,
+      needsReview: 0
+    });
     assert.equal(summary.churnRate, 5);
     assert.equal(summary.churnRateDenominator, 20);
     assert.equal(summary.lifetimeValue, 1900);
@@ -319,6 +351,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.closeRateMetrics.websiteCloseRate, 30);
     assert.equal(summary.closeRateMetrics.totalCloseRate, 17.65);
     assert(summary.dataNotes.some((note) => note.includes("manual review rows are not counted")));
+    assert(summary.dataNotes.some((note) => note.includes("Cancellation quality check")));
     assert(!summary.dataNotes.some((note) => note.includes("Google Ads is not connected yet")));
     const leadQueries = pool.queries.filter((query) => query.sql.includes("FROM opportunities"));
     assert(leadQueries.some((query) => query.sql.includes("reporting_exclusions")));
@@ -373,6 +406,42 @@ describe("dashboard KPI aggregation", () => {
     assert(html.includes("$95.00"));
     assert(html.includes("As of latest Sweep&amp;Go active roster snapshot"));
     assert(html.includes("/assets/doo-doo-patrol-logo.png"));
+    assert(html.includes("<dt>Website</dt>"));
+    assert(html.includes("<dt>Facebook</dt>"));
+    assert(html.includes("<dt>Unknown/Other</dt>"));
+  });
+
+  it("uses the owner-confirmed July 2026 churn baseline when no historical active roster snapshot exists", async () => {
+    const summary = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(summary.churnRateDenominator, 252);
+    assert.equal(summary.churnRate, 0.4);
+    assert(summary.dataNotes.some((note) => note.includes("owner-confirmed starting active count of 252")));
+  });
+
+  it("uses a historical active roster snapshot for churn when one exists before the selected start date", async () => {
+    class HistoricalSnapshotPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("to_regclass('public.sweepandgo_active_roster_snapshots')")) {
+          return { rows: [{ table_name: "sweepandgo_active_roster_snapshots" }] };
+        }
+        if (sql.includes("FROM sweepandgo_active_roster_snapshots") && sql.includes("snapshot_date <=")) {
+          return { rows: [{ active_client_count: 252, snapshot_date: "2026-07-01" }] };
+        }
+        if (sql.includes("FROM sweepandgo_active_roster_snapshots")) {
+          return { rows: [] };
+        }
+        return await super.query(sql, params);
+      }
+    }
+    const summary = await new PostgresDashboardDataSource(new HistoricalSnapshotPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(summary.churnRateDenominator, 252);
+    assert(summary.dataNotes.some((note) => note.includes("active roster snapshot from 2026-07-01")));
+    assert(!summary.dataNotes.some((note) => note.includes("owner-confirmed starting active count")));
   });
 
   it("uses the latest Sweep&Go active roster snapshot for Total Active Clients", async () => {

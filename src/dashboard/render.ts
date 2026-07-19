@@ -91,13 +91,39 @@ function renderSummary(summary: DashboardSummary): string {
       value: summary.totalActiveClients === null ? "Needs verification" : String(summary.totalActiveClients),
       note: activeClientsNote
     },
-    { label: "Total Leads", value: String(summary.totalLeads) },
-    { label: "New Recurring Customers", value: String(summary.newRecurringCustomers) },
-    { label: "Close Rate", value: maybePercent(summary.closeRateMetrics.totalCloseRate) },
+    {
+      label: "Total Leads",
+      value: String(summary.totalLeads),
+      breakdown: sourceBreakdownRows({
+        website: summary.leadBreakdown.website,
+        facebook: summary.leadBreakdown.facebook,
+        other: summary.leadBreakdown.other,
+        unknown: summary.leadBreakdown.unknown
+      }, { combineOtherUnknown: true })
+    },
+    {
+      label: "New Recurring Customers",
+      value: String(summary.newRecurringCustomers),
+      breakdown: sourceBreakdownRows(summary.newRecurringCustomerBreakdown)
+    },
+    {
+      label: "Close Rate",
+      value: maybePercent(summary.closeRateMetrics.totalCloseRate),
+      breakdown: [
+        { label: "Website", value: maybePercent(summary.closeRateMetrics.websiteCloseRate) },
+        { label: "Facebook", value: maybePercent(summary.closeRateMetrics.facebookCloseRate) },
+        { label: "Unknown/Other", value: "No data" }
+      ]
+    },
     {
       label: "Churn Rate",
       value: maybePercent(summary.churnRate),
-      note: summary.churnRateReason
+      note: summary.churnRateReason,
+      breakdown: [
+        { label: "Counted", value: String(summary.cancellationMetrics.countedCancellations) },
+        { label: "Needs Review", value: String(summary.cancellationMetrics.needsReview) },
+        { label: "Excluded", value: String(summary.cancellationMetrics.subscriptionOnlyActiveExcluded + summary.cancellationMetrics.duplicateRowsExcluded + summary.cancellationMetrics.pauseRowsExcluded) }
+      ]
     },
     {
       label: "Average Monthly Ticket",
@@ -150,6 +176,12 @@ type DashboardCard = {
   label: string;
   value: string;
   note?: string;
+  breakdown?: DashboardCardBreakdown[];
+};
+
+type DashboardCardBreakdown = {
+  label: string;
+  value: string;
 };
 
 function renderCard(card: DashboardCard): string {
@@ -157,9 +189,37 @@ function renderCard(card: DashboardCard): string {
     <article class="card">
       <span>${escapeHtml(card.label)}</span>
       <strong>${escapeHtml(card.value)}</strong>
+      ${card.breakdown?.length ? `
+        <dl class="card-breakdown">
+          ${card.breakdown.map((row) => `
+            <div>
+              <dt>${escapeHtml(row.label)}</dt>
+              <dd>${escapeHtml(row.value)}</dd>
+            </div>
+          `).join("")}
+        </dl>
+      ` : ""}
       ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ""}
     </article>
   `;
+}
+
+function sourceBreakdownRows(
+  input: { website: number; facebook: number; other: number; unknown: number },
+  options: { combineOtherUnknown?: boolean } = {}
+): DashboardCardBreakdown[] {
+  const rows = [
+    { label: "Website", value: String(input.website) },
+    { label: "Facebook", value: String(input.facebook) }
+  ];
+  if (options.combineOtherUnknown) {
+    rows.push({ label: "Other/Unknown", value: String(input.other + input.unknown) });
+    return rows;
+  }
+  if (input.unknown > 0 || input.other > 0) {
+    rows.push({ label: "Unknown/Other", value: String(input.unknown + input.other) });
+  }
+  return rows;
 }
 
 function renderCharts(trends: DashboardTrendPoint[]): string {
@@ -333,6 +393,10 @@ function pageShell(input: { title: string; body: string }): string {
     .card { background:white; border:1px solid var(--line); border-radius:8px; padding:16px; min-height:104px; box-shadow:0 8px 24px rgba(16,42,67,.06); }
     .card span { display:block; color:#557083; font-weight:700; min-height:38px; }
     .card strong { display:block; color:var(--navy); font-size:clamp(1.25rem, 3vw, 2rem); margin-top:8px; overflow-wrap:anywhere; }
+    .card-breakdown { display:grid; gap:4px; margin:10px 0 0; }
+    .card-breakdown div { display:flex; justify-content:space-between; gap:10px; color:#557083; font-size:.82rem; font-weight:800; }
+    .card-breakdown dt, .card-breakdown dd { margin:0; }
+    .card-breakdown dd { color:var(--navy); }
     .card small { display:block; margin-top:8px; color:#557083; font-weight:700; line-height:1.35; }
     .notes p { margin:4px 0; }
     .grid-two { display:grid; grid-template-columns:1fr 1fr; gap:16px; }

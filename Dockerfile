@@ -9,6 +9,7 @@ RUN npm install --omit=dev
 COPY src ./src
 COPY migrations ./migrations
 COPY scripts ./scripts
+COPY public ./public
 COPY SWEEPANDGO_FIELD_MAP.md ./SWEEPANDGO_FIELD_MAP.md
 COPY GOHIGHLEVEL_FIELD_MAP.md ./GOHIGHLEVEL_FIELD_MAP.md
 

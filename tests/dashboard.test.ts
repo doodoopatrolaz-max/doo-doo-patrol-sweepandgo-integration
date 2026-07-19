@@ -32,9 +32,10 @@ class FakePool {
     if (sql.includes("FROM lead_customer_matches")) {
       return {
         rows: [{
-          facebook_matched: 0,
-          website_matched: 3,
-          total_matched: 3,
+          facebook_future_lead_month_credit: 0,
+          website_future_lead_month_credit: 0,
+          other_unknown_future_lead_month_credit: 0,
+          total_future_lead_month_credit: 0,
           manual_review: 1
         }]
       };
@@ -53,6 +54,15 @@ class FakePool {
     }
     if (sql.includes("SUM(monthly_recurring_revenue)")) {
       return { rows: [{ count: 2, mrr_added: 60, priced_count: 2 }] };
+    }
+    if (sql.includes("facebook_customers")) {
+      return {
+        rows: [{
+          facebook_customers: 0,
+          website_customers: 3,
+          other_unknown_customers: 0
+        }]
+      };
     }
     if (sql.includes("FROM customers c")) {
       return {
@@ -312,6 +322,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
         totalPriorPeriodLeadConversions: 0,
         facebookCloseRate: null,
         websiteCloseRate: null,
+        otherUnknownCloseRate: null,
         totalCloseRate: null,
         costPerNewCustomerStatus: "no_new_customers"
       },
@@ -578,22 +589,26 @@ describe("dashboard KPI aggregation", () => {
     assert(renderDashboard(dashboardData(summary)).includes("0%"));
   });
 
-  it("keeps prior-period lead conversions out of selected-period lead counts and same-period close rate", async () => {
-    class PriorPeriodConversionPool extends FakePool {
+  it("uses selected-period attributed new recurring customers for owner-facing close rate", async () => {
+    class JulyWebsiteCloseRatePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
         if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
-          return { rows: [{ facebook_leads: 0, website_leads: 14 }] };
+          return { rows: [{ facebook_leads: 0, website_leads: 14, other_unknown_leads: 0 }] };
         }
         if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
           return { rows: [{ source: "website", count: 14 }] };
         }
+        if (sql.includes("facebook_customers")) {
+          return { rows: [{ facebook_customers: 0, website_customers: 5, other_unknown_customers: 0 }] };
+        }
         if (sql.includes("FROM lead_customer_matches")) {
           return {
             rows: [{
-              facebook_matched: 0,
-              website_matched: 0,
-              total_matched: 0,
+              facebook_future_lead_month_credit: 0,
+              website_future_lead_month_credit: 0,
+              other_unknown_future_lead_month_credit: 0,
+              total_future_lead_month_credit: 0,
               manual_review: 0,
               facebook_prior_period: 0,
               website_prior_period: 1,
@@ -604,17 +619,96 @@ describe("dashboard KPI aggregation", () => {
         return await super.query(sql, params);
       }
     }
-    const summary = await new PostgresDashboardDataSource(new PriorPeriodConversionPool())
+    const summary = await new PostgresDashboardDataSource(new JulyWebsiteCloseRatePool())
       .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
     const html = renderDashboard(dashboardData(summary));
 
     assert.equal(summary.websiteLeads, 14);
-    assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 0);
+    assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 5);
     assert.equal(summary.closeRateMetrics.websitePriorPeriodLeadConversions, 1);
     assert.equal(summary.priorPeriodLeadConversions, 1);
-    assert.equal(summary.closeRateMetrics.websiteCloseRate, 0);
+    assert.equal(summary.closeRateMetrics.websiteCloseRate, 35.71);
+    assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 35.71);
     assert(summary.dataNotes.some((note) => note.includes("leads created before the selected period")));
+    assert(summary.dataNotes.some((note) => note.includes("new recurring customers in the selected period divided by leads created in the selected period")));
     assert(html.includes("Prior-period leads"));
+    assert(html.includes("Includes 1 prior-period lead conversion."));
+  });
+
+  it("updates Facebook and total close rates when Facebook recurring customers exist", async () => {
+    class FutureFacebookCloseRatePool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
+          return { rows: [{ facebook_leads: 4, website_leads: 6, other_unknown_leads: 0 }] };
+        }
+        if (sql.includes("facebook_customers")) {
+          return { rows: [{ facebook_customers: 2, website_customers: 3, other_unknown_customers: 0 }] };
+        }
+        if (sql.includes("FROM lead_customer_matches")) {
+          return {
+            rows: [{
+              facebook_future_lead_month_credit: 0,
+              website_future_lead_month_credit: 0,
+              other_unknown_future_lead_month_credit: 0,
+              total_future_lead_month_credit: 0,
+              manual_review: 0,
+              facebook_prior_period: 0,
+              website_prior_period: 0,
+              total_prior_period: 0
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+    const summary = await new PostgresDashboardDataSource(new FutureFacebookCloseRatePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(summary.closeRateMetrics.facebookCloseRate, 50);
+    assert.equal(summary.closeRateMetrics.websiteCloseRate, 50);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 50);
+    assert.equal(summary.closeRateMetrics.totalMatchedConversions, 5);
+  });
+
+  it("credits the original lead month for a preserved future conversion without inflating that month leads", async () => {
+    class OriginalLeadMonthCreditPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
+          return { rows: [{ facebook_leads: 0, website_leads: 10, other_unknown_leads: 0 }] };
+        }
+        if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
+          return { rows: [{ source: "website", count: 10 }] };
+        }
+        if (sql.includes("facebook_customers")) {
+          return { rows: [{ facebook_customers: 0, website_customers: 0, other_unknown_customers: 0 }] };
+        }
+        if (sql.includes("FROM lead_customer_matches")) {
+          return {
+            rows: [{
+              facebook_future_lead_month_credit: 0,
+              website_future_lead_month_credit: 1,
+              other_unknown_future_lead_month_credit: 0,
+              total_future_lead_month_credit: 1,
+              manual_review: 0,
+              facebook_prior_period: 0,
+              website_prior_period: 0,
+              total_prior_period: 0
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+    const summary = await new PostgresDashboardDataSource(new OriginalLeadMonthCreditPool())
+      .getSummary(parseDashboardDateRange({ range: "lastMonth" }));
+
+    assert.equal(summary.websiteLeads, 10);
+    assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 1);
+    assert.equal(summary.closeRateMetrics.websiteCloseRate, 10);
+    assert.equal(summary.priorPeriodLeadConversions, 0);
   });
 
   it("calculates average revenue per service hour from completed Sweep&Go job rows", () => {

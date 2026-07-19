@@ -78,6 +78,7 @@ export type DashboardCloseRateMetrics = {
   totalPriorPeriodLeadConversions: number;
   facebookCloseRate: number | null;
   websiteCloseRate: number | null;
+  otherUnknownCloseRate: number | null;
   totalCloseRate: number | null;
   costPerNewCustomerStatus: DashboardCostPerNewCustomerStatus;
 };

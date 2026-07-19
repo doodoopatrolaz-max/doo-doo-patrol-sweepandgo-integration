@@ -146,16 +146,36 @@ export async function runSweepAndGoCompletedJobsSync(
 
 export function completedJobsSyncOptionsFromArgs(args: string[]): SweepAndGoCompletedJobsSyncOptions {
   const parsed = parseArgs(args);
-  const startDate = parsed.start ?? parsed.date;
-  const endDate = parsed.end ?? parsed.date ?? startDate;
+  const rollingRange = parsed["rolling-days"]
+    ? completedJobsDateRangeFromRollingDays(positiveInteger(parsed["rolling-days"], "--rolling-days"))
+    : undefined;
+  const startDate = parsed.start ?? parsed.date ?? rollingRange?.startDate;
+  const endDate = parsed.end ?? parsed.date ?? rollingRange?.endDate ?? startDate;
   if (!startDate || !endDate) {
-    throw new Error("--start and --end are required, or pass --date=YYYY-MM-DD");
+    throw new Error("--start and --end are required, or pass --date=YYYY-MM-DD or --rolling-days=N");
   }
   return {
     startDate,
     endDate,
     maxPages: positiveInteger(parsed["max-pages"] ?? "25", "--max-pages"),
     dryRun: parsed["dry-run"] === "true" || parsed["dry-run"] === "1" || args.includes("--dry-run")
+  };
+}
+
+export function completedJobsDateRangeFromRollingDays(
+  days: number,
+  now = new Date(),
+  timeZone = "America/Phoenix"
+): { startDate: string; endDate: string } {
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new Error("--rolling-days must be a positive number");
+  }
+  const today = dateInTimeZone(now, timeZone);
+  const end = addUtcDays(today, -1);
+  const start = addUtcDays(end, -(Math.floor(days) - 1));
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10)
   };
 }
 
@@ -192,6 +212,21 @@ function positiveInteger(value: string, name: string): number {
     throw new Error(`${name} must be a positive number`);
   }
   return Math.floor(parsed);
+}
+
+function dateInTimeZone(date: Date, timeZone: string): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return new Date(Date.UTC(Number(lookup.year), Number(lookup.month) - 1, Number(lookup.day)));
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 86_400_000);
 }
 
 function roundMoney(value: number): number {

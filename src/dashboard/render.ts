@@ -117,8 +117,11 @@ function renderSummary(summary: DashboardSummary): string {
       breakdown: [
         { label: "Website", value: maybePercent(summary.closeRateMetrics.websiteCloseRate) },
         { label: "Facebook", value: maybePercent(summary.closeRateMetrics.facebookCloseRate) },
-        { label: "Unknown/Other", value: "No data" }
-      ]
+        { label: "Unknown/Other", value: maybePercent(summary.closeRateMetrics.otherUnknownCloseRate) }
+      ],
+      note: summary.priorPeriodLeadConversions > 0
+        ? `Includes ${summary.priorPeriodLeadConversions} prior-period lead conversion${summary.priorPeriodLeadConversions === 1 ? "" : "s"}.`
+        : undefined
     },
     {
       label: "Churn Rate",

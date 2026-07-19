@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  completedJobsDateRangeFromRollingDays,
+  completedJobsSyncOptionsFromArgs,
+} from "../src/sweepandgo/completedJobsSync.ts";
+import {
   extractCompletedJobReportRows,
   mapSweepAndGoCompletedJob,
   summarizeCompletedJobFacts
@@ -101,5 +105,44 @@ describe("Sweep&Go completed jobs store", () => {
     assert.equal(first.inserted, true);
     assert.equal(second.updated, true);
     assert(pool.queries[0]?.sql.includes("ON CONFLICT (provider, job_fingerprint)"));
+  });
+});
+
+describe("Sweep&Go completed jobs sync options", () => {
+  it("calculates rolling days in America/Phoenix and excludes today", () => {
+    const range = completedJobsDateRangeFromRollingDays(
+      3,
+      new Date("2026-07-19T06:30:00.000Z")
+    );
+
+    assert.deepEqual(range, {
+      startDate: "2026-07-15",
+      endDate: "2026-07-17"
+    });
+  });
+
+  it("parses rolling-days and max-pages without breaking bounded sync limits", () => {
+    const options = completedJobsSyncOptionsFromArgs([
+      "--rolling-days=3",
+      "--max-pages=25",
+      "--dry-run"
+    ]);
+
+    assert.equal(options.maxPages, 25);
+    assert.equal(options.dryRun, true);
+    assert.match(options.startDate, /^\d{4}-\d{2}-\d{2}$/);
+    assert.match(options.endDate, /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("keeps explicit start and end support working", () => {
+    const options = completedJobsSyncOptionsFromArgs([
+      "--start=2026-07-01",
+      "--end=2026-07-19",
+      "--max-pages=19"
+    ]);
+
+    assert.equal(options.startDate, "2026-07-01");
+    assert.equal(options.endDate, "2026-07-19");
+    assert.equal(options.maxPages, 19);
   });
 });

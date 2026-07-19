@@ -640,22 +640,32 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
-    const [leadRows, matchRows] = await Promise.all([
+    const [leadRows, customerRows, matchRows] = await Promise.all([
       this.pool.query(
         `SELECT
            COUNT(*) FILTER (WHERE original_lead_source = 'facebook')::int AS facebook_leads,
-           COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads
+           COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads,
+           COUNT(*) FILTER (WHERE COALESCE(original_lead_source, 'unknown') NOT IN ('facebook', 'website'))::int AS other_unknown_leads
          FROM opportunities o
          WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
-           AND o.original_lead_source IN ('facebook', 'website')
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
         `SELECT
-           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'facebook' AND lead_date BETWEEN $1::date AND $2::date)::int AS facebook_matched,
-           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'website' AND lead_date BETWEEN $1::date AND $2::date)::int AS website_matched,
-           COUNT(*) FILTER (WHERE status = 'matched' AND lead_date BETWEEN $1::date AND $2::date)::int AS total_matched,
+           COUNT(*) FILTER (WHERE source = 'facebook')::int AS facebook_customers,
+           COUNT(*) FILTER (WHERE source = 'website')::int AS website_customers,
+           COUNT(*) FILTER (WHERE COALESCE(source, 'unknown') NOT IN ('facebook', 'website'))::int AS other_unknown_customers
+         FROM customers
+         WHERE first_recurring_date BETWEEN $1::date AND $2::date`,
+        [range.startDate, range.endDate]
+      ),
+      this.pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'facebook' AND lead_date BETWEEN $1::date AND $2::date AND conversion_date > $2::date)::int AS facebook_future_lead_month_credit,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'website' AND lead_date BETWEEN $1::date AND $2::date AND conversion_date > $2::date)::int AS website_future_lead_month_credit,
+           COUNT(*) FILTER (WHERE status = 'matched' AND COALESCE(lead_source, 'unknown') NOT IN ('facebook', 'website') AND lead_date BETWEEN $1::date AND $2::date AND conversion_date > $2::date)::int AS other_unknown_future_lead_month_credit,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_date BETWEEN $1::date AND $2::date AND conversion_date > $2::date)::int AS total_future_lead_month_credit,
            COUNT(*) FILTER (WHERE status = 'review' AND conversion_date BETWEEN $1::date AND $2::date)::int AS manual_review,
            COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'facebook' AND lead_date < $1::date AND conversion_date BETWEEN $1::date AND $2::date)::int AS facebook_prior_period,
            COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'website' AND lead_date < $1::date AND conversion_date BETWEEN $1::date AND $2::date)::int AS website_prior_period,
@@ -667,12 +677,15 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       )
     ]);
     const leadRow = leadRows.rows[0] ?? {};
+    const customerRow = customerRows.rows[0] ?? {};
     const matchRow = matchRows.rows[0] ?? {};
     const facebookLeads = integerValue(leadRow.facebook_leads);
     const websiteLeads = integerValue(leadRow.website_leads);
-    const facebookMatchedConversions = integerValue(matchRow.facebook_matched);
-    const websiteMatchedConversions = integerValue(matchRow.website_matched);
-    const totalMatchedConversions = integerValue(matchRow.total_matched);
+    const otherUnknownLeads = integerValue(leadRow.other_unknown_leads);
+    const facebookMatchedConversions = integerValue(customerRow.facebook_customers) + integerValue(matchRow.facebook_future_lead_month_credit);
+    const websiteMatchedConversions = integerValue(customerRow.website_customers) + integerValue(matchRow.website_future_lead_month_credit);
+    const otherUnknownMatchedConversions = integerValue(customerRow.other_unknown_customers) + integerValue(matchRow.other_unknown_future_lead_month_credit);
+    const totalMatchedConversions = facebookMatchedConversions + websiteMatchedConversions + otherUnknownMatchedConversions;
 
     return {
       facebookMatchedConversions,
@@ -684,7 +697,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       totalPriorPeriodLeadConversions: integerValue(matchRow.total_prior_period),
       facebookCloseRate: percentage(facebookMatchedConversions, facebookLeads),
       websiteCloseRate: percentage(websiteMatchedConversions, websiteLeads),
-      totalCloseRate: percentage(totalMatchedConversions, facebookLeads + websiteLeads),
+      otherUnknownCloseRate: percentage(otherUnknownMatchedConversions, otherUnknownLeads),
+      totalCloseRate: percentage(totalMatchedConversions, facebookLeads + websiteLeads + otherUnknownLeads),
       costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
     };
   }
@@ -870,7 +884,7 @@ function dataNotes(input: {
   if (input.costPerNewRecurringCustomerStatus !== "available") {
     notes.push(`Cost per new customer note: ${input.costPerNewRecurringCustomerNote}.`);
   }
-  notes.push("Close rate uses stored stable GoHighLevel lead-to-customer matches only; manual review rows are not counted as conversions.");
+  notes.push("Close rate uses new recurring customers in the selected period divided by leads created in the selected period. Website and Facebook rates use the same source-specific formula; manual review rows are not counted as conversions.");
   return notes;
 }
 
@@ -893,6 +907,7 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     totalPriorPeriodLeadConversions: 0,
     facebookCloseRate: null,
     websiteCloseRate: null,
+    otherUnknownCloseRate: null,
     totalCloseRate: null,
     costPerNewCustomerStatus: "no_ad_spend"
   };

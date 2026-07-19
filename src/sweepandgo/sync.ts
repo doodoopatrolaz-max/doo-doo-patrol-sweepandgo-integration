@@ -19,6 +19,9 @@ export type SweepAndGoSyncResult = {
   recordsWritten: number;
 };
 
+export const DEFAULT_DAILY_SWEEPGO_MAX_PAGES = 25;
+export const DEFAULT_HISTORICAL_SWEEPGO_MAX_PAGES = 100;
+
 export async function runSweepAndGoReportingSync(options: SweepAndGoSyncOptions): Promise<SweepAndGoSyncResult> {
   const config = loadConfig();
   if (!config.databaseUrl) {
@@ -33,7 +36,7 @@ export async function runSweepAndGoReportingSync(options: SweepAndGoSyncOptions)
   let recordsWritten = 0;
 
   try {
-    const maxPages = options.maxPages ?? (options.mode === "historical" ? 100 : 5);
+    const maxPages = options.maxPages ?? (options.mode === "historical" ? DEFAULT_HISTORICAL_SWEEPGO_MAX_PAGES : DEFAULT_DAILY_SWEEPGO_MAX_PAGES);
     const customerSources = [
       { listType: "active" as const, response: await client.getActiveClients({ allPages: true, maxPages }) },
       { listType: "active_no_subscription" as const, response: await client.getActiveClientsWithoutSubscription({ allPages: true, maxPages }) },

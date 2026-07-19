@@ -141,13 +141,17 @@ function renderSummary(summary: DashboardSummary): string {
       note: summary.lifetimeValueReason
     },
     {
-      label: "Avg Revenue / Service Hour",
+      label: "Average Revenue Per Service Hour",
       value: maybeMoney(summary.averageRevenuePerHour),
       note: summary.averageRevenuePerHourReason,
       breakdown: [
         { label: "Stops", value: String(summary.revenuePerHourMetrics.completedStops) },
         { label: "Service Hrs", value: String(summary.revenuePerHourMetrics.serviceHours) },
-        { label: "Revenue", value: money(summary.revenuePerHourMetrics.serviceRevenue) }
+        { label: "Revenue", value: money(summary.revenuePerHourMetrics.serviceRevenue) },
+        { label: "Revenue / Stop", value: maybeMoney(summary.revenuePerHourMetrics.revenuePerStop) },
+        { label: "Avg Min / Stop", value: summary.revenuePerHourMetrics.averageMinutesPerStop === null ? "n/a" : String(summary.revenuePerHourMetrics.averageMinutesPerStop) },
+        { label: "Scooping", value: money(summary.revenuePerHourMetrics.scoopingRevenue) },
+        { label: "Spray", value: money(summary.revenuePerHourMetrics.sprayRevenue) }
       ]
     },
     { label: "Net Customer Growth", value: signed(summary.netRecurringCustomerGrowth) },

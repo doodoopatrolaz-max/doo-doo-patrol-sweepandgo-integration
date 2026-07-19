@@ -83,6 +83,13 @@ export class SweepAndGoClient {
     return this.request("GET", "/api/v1/dispatch_board/jobs_for_date", { date });
   }
 
+  async getCompletedJobsReport(input: { date?: string; dateFrom?: string; dateTo?: string }): Promise<unknown> {
+    const query = input.date
+      ? { date: input.date }
+      : { date_from: input.dateFrom, date_to: input.dateTo };
+    return this.request("GET", "/api/v2/report/completed_jobs_report", query);
+  }
+
   async countDogs(): Promise<unknown> {
     return this.request("GET", "/api/v2/report/count_happy_dogs");
   }

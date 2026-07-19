@@ -160,6 +160,55 @@ class ActiveRosterSnapshotPool extends FakePool {
   }
 }
 
+class CompletedJobsFactPool extends FakePool {
+  override async query(sql: string, params: unknown[] = []) {
+    this.queries.push({ sql, params });
+    if (sql.includes("to_regclass('public.sweepandgo_completed_jobs')")) {
+      return { rows: [{ table_name: "sweepandgo_completed_jobs" }] };
+    }
+    if (sql.includes("FROM sweepandgo_completed_jobs")) {
+      return {
+        rows: [
+          {
+            serviceDate: "2026-07-01",
+            technicianKey: "tech-1",
+            stopFingerprint: "stop-1",
+            jobStatus: "completed",
+            jobType: "recurring",
+            allocatedServicePrice: 60,
+            recordedDurationMinutes: 30,
+            isSpray: false,
+            isInitial: false
+          },
+          {
+            serviceDate: "2026-07-01",
+            technicianKey: "tech-1",
+            stopFingerprint: "stop-1",
+            jobStatus: "completed",
+            jobType: "recurring",
+            allocatedServicePrice: 20,
+            recordedDurationMinutes: 0,
+            isSpray: true,
+            isInitial: false
+          },
+          {
+            serviceDate: "2026-07-01",
+            technicianKey: "tech-1",
+            stopFingerprint: "stop-2",
+            jobStatus: "skipped",
+            jobType: "recurring",
+            allocatedServicePrice: 50,
+            recordedDurationMinutes: 15,
+            isSpray: false,
+            isInitial: false
+          }
+        ]
+      };
+    }
+    return await super.query(sql, params);
+  }
+}
+
 class SyncHealthPool {
   async query(sql: string) {
     if (sql.includes("FROM sync_runs")) {
@@ -357,7 +406,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.churnRateDenominator, 20);
     assert.equal(summary.lifetimeValue, 1900);
     assert.equal(summary.averageRevenuePerHour, 160);
-    assert.equal(summary.averageRevenuePerHourReason, "Sweep&Go completed job revenue divided by recorded service time. This does not include drive time or breaks.");
+    assert.equal(summary.averageRevenuePerHourReason, "Completed job revenue divided by recorded service time. Does not include drive time or breaks.");
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
     assert.equal(summary.revenuePerHourMetrics.serviceHours, 0.5);
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
@@ -418,8 +467,8 @@ describe("dashboard KPI aggregation", () => {
     assert(html.indexOf("Close Rate") < html.indexOf("Churn Rate"));
     assert(html.indexOf("Churn Rate") < html.indexOf("Average Monthly Ticket"));
     assert(html.indexOf("Average Monthly Ticket") < html.indexOf("Lifetime Value"));
-    assert(html.indexOf("Lifetime Value") < html.indexOf("Avg Revenue / Service Hour"));
-    assert(html.indexOf("Avg Revenue / Service Hour") < html.indexOf("Net Customer Growth"));
+    assert(html.indexOf("Lifetime Value") < html.indexOf("Average Revenue Per Service Hour"));
+    assert(html.indexOf("Average Revenue Per Service Hour") < html.indexOf("Net Customer Growth"));
     assert(html.indexOf("Net Customer Growth") < html.indexOf("Total Ad Spend"));
     assert(html.indexOf("Total Ad Spend") < html.indexOf("Meta Spend"));
     assert(!html.includes("<span>Estimated MRR</span>"));
@@ -589,6 +638,18 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(metrics.sprayRevenue, 20);
     assert.equal(metrics.revenuePerStop, 80);
     assert.equal(metrics.averageMinutesPerStop, 30);
+  });
+
+  it("uses stored completed job facts for dashboard service-hour revenue when available", async () => {
+    const pool = new CompletedJobsFactPool();
+    const summary = await new PostgresDashboardDataSource(pool)
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(summary.averageRevenuePerHour, 160);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
+    assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
+    assert.equal(summary.revenuePerHourMetrics.sprayRevenue, 20);
+    assert(pool.queries.some((query) => query.sql.includes("FROM sweepandgo_completed_jobs")));
   });
 
   it("keeps service-hour revenue unavailable when completed jobs have no usable service time", () => {

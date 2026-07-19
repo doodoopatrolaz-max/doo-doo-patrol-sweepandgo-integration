@@ -6,6 +6,18 @@ export type CompletedJobRevenueInputRow = {
   receivedAt?: unknown;
 };
 
+export type CompletedJobRevenueFactInputRow = {
+  serviceDate?: unknown;
+  technicianKey?: unknown;
+  stopFingerprint?: unknown;
+  jobStatus?: unknown;
+  jobType?: unknown;
+  allocatedServicePrice?: unknown;
+  recordedDurationMinutes?: unknown;
+  isSpray?: unknown;
+  isInitial?: unknown;
+};
+
 type ParsedCompletedJob = {
   routeDate?: string;
   employeeId?: string;
@@ -28,10 +40,38 @@ export function calculateCompletedJobRevenueMetrics(
   rows: CompletedJobRevenueInputRow[],
   range: DashboardDateRange
 ): DashboardRevenuePerHourMetrics {
-  const parsedJobs = rows
+  return calculateParsedCompletedJobRevenueMetrics(rows
     .map(parseCompletedJob)
     .filter((job): job is ParsedCompletedJob => Boolean(job.routeDate))
-    .filter((job) => job.routeDate! >= range.startDate && job.routeDate! <= range.endDate);
+    .filter((job) => job.routeDate! >= range.startDate && job.routeDate! <= range.endDate), range);
+}
+
+export function calculateCompletedJobRevenueMetricsFromFacts(
+  rows: CompletedJobRevenueFactInputRow[],
+  range: DashboardDateRange
+): DashboardRevenuePerHourMetrics {
+  return calculateParsedCompletedJobRevenueMetrics(rows.map((row) => ({
+    routeDate: stringValue(row.serviceDate)?.slice(0, 10),
+    employeeId: stringValue(row.technicianKey),
+    stopKey: stringValue(row.stopFingerprint),
+    status: (stringValue(row.jobStatus) ?? "unknown").toLowerCase(),
+    type: (stringValue(row.jobType) ?? "").toLowerCase(),
+    price: numberValue(row.allocatedServicePrice),
+    durationMinutes: numberValue(row.recordedDurationMinutes),
+    isSpray: booleanValue(row.isSpray),
+    isInitial: booleanValue(row.isInitial),
+    isBoundary: ROUTE_BOUNDARY_PATTERN.test((stringValue(row.jobType) ?? "").trim())
+  })).filter((job) =>
+    job.routeDate !== undefined
+      && job.routeDate >= range.startDate
+      && job.routeDate <= range.endDate
+  ), range);
+}
+
+function calculateParsedCompletedJobRevenueMetrics(
+  parsedJobs: ParsedCompletedJob[],
+  _range: DashboardDateRange
+): DashboardRevenuePerHourMetrics {
   const completedJobs = parsedJobs.filter((job) => !isExcludedJob(job));
   const revenueJobs = completedJobs.filter((job) => job.price !== undefined && job.price > 0);
   const timedRevenueJobs = revenueJobs.filter((job) => (job.durationMinutes ?? 0) > 0);
@@ -170,6 +210,26 @@ function moneyValue(value: unknown): number | undefined {
   }
   const parsed = Number(raw.replace(/[^0-9.-]/g, ""));
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return moneyValue(value);
+}
+
+function booleanValue(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value === 1;
+  }
+  if (typeof value === "string") {
+    return ["1", "true", "yes"].includes(value.toLowerCase());
+  }
+  return false;
 }
 
 function stringValue(value: unknown): string | undefined {

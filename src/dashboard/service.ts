@@ -1,5 +1,5 @@
 import { enumerateDates, type DashboardDateRange } from "./dateRange.ts";
-import { calculateCompletedJobRevenueMetrics } from "./serviceRevenue.ts";
+import { calculateCompletedJobRevenueMetrics, calculateCompletedJobRevenueMetricsFromFacts } from "./serviceRevenue.ts";
 import type {
   DashboardCampaignRow,
   DashboardAdProviderStatus,
@@ -136,7 +136,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       averageRevenuePerHour,
       averageRevenuePerHourReason: averageRevenuePerHour === null
         ? (revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.")
-        : "Sweep&Go completed job revenue divided by recorded service time. This does not include drive time or breaks.",
+        : "Completed job revenue divided by recorded service time. Does not include drive time or breaks.",
       revenuePerHourMetrics,
       priorPeriodLeadConversions: closeRateMetrics.totalPriorPeriodLeadConversions,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
@@ -603,6 +603,26 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async revenuePerHourMetrics(range: DashboardDateRange): Promise<DashboardRevenuePerHourMetrics> {
+    const completedJobsTable = await this.pool.query("SELECT to_regclass('public.sweepandgo_completed_jobs') AS table_name");
+    if (completedJobsTable.rows[0]?.table_name) {
+      const factRows = await this.pool.query(
+        `SELECT service_date::text AS "serviceDate",
+                technician_key AS "technicianKey",
+                stop_fingerprint AS "stopFingerprint",
+                job_status AS "jobStatus",
+                job_type AS "jobType",
+                allocated_service_price::float AS "allocatedServicePrice",
+                recorded_duration_minutes::float AS "recordedDurationMinutes",
+                is_spray AS "isSpray",
+                is_initial AS "isInitial"
+         FROM sweepandgo_completed_jobs
+         WHERE service_date BETWEEN $1::date AND $2::date
+         ORDER BY service_date, technician_key, stop_fingerprint`,
+        [range.startDate, range.endDate]
+      );
+      return calculateCompletedJobRevenueMetricsFromFacts(factRows.rows, range);
+    }
+
     const result = await this.pool.query(
       `SELECT payload,
               received_at AS "receivedAt"
@@ -842,7 +862,7 @@ function dataNotes(input: {
   if (input.revenuePerHourMetrics.status !== "available") {
     notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour is unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.");
   } else {
-    notes.push("Average Revenue Per Hour uses Sweep&Go completed job revenue divided by recorded service time. It does not include drive time or breaks.");
+    notes.push("Average Revenue Per Service Hour uses completed job revenue divided by recorded service time. It does not include drive time or breaks.");
   }
   if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {
     notes.push(`${input.closeRateMetrics.totalPriorPeriodLeadConversions} conversion(s) in this range came from leads created before the selected period; they do not increase the selected-period lead count.`);

@@ -29,6 +29,23 @@ describe("Sweep&Go reporting mapper", () => {
     assert.equal(mapped.sourceEvidenceField, "tracking_field");
   });
 
+  it("maps direct website signup source markers from Sweep&Go customer rows", () => {
+    const mapped = mapSweepAndGoCustomer({
+      client: "rcl_SANITIZED_DIRECT",
+      status: "active",
+      subscription_names: "Weekly",
+      cleanup_frequency: "weekly",
+      lead_source: "website",
+      original_source: "website",
+      source_detail: "direct_signup"
+    });
+
+    assert(mapped);
+    assert.equal(mapped.source, "website");
+    assert.equal(mapped.sourceRaw, "website");
+    assert.equal(mapped.sourceEvidenceField, "lead_source");
+  });
+
   it("does not count active clients without subscriptions as recurring customers", () => {
     const mapped = mapSweepAndGoCustomer({
       client: "rcl_SANITIZED",
@@ -60,6 +77,29 @@ describe("Sweep&Go reporting mapper", () => {
     assert.deepEqual(normalizeExplicitCustomerSource({
       email: "facebook-person@example.com",
       first_name: "Facebook"
+    }), { normalizedSource: "unknown" });
+
+    assert.deepEqual(normalizeExplicitCustomerSource({
+      lead_source: "website",
+      original_source: "website",
+      source_detail: "direct_signup"
+    }), {
+      normalizedSource: "website",
+      rawSource: "website",
+      evidenceField: "lead_source"
+    });
+
+    assert.deepEqual(normalizeExplicitCustomerSource({
+      original_source: "website",
+      source_detail: "direct_signup"
+    }), {
+      normalizedSource: "website",
+      rawSource: "website",
+      evidenceField: "original_source"
+    });
+
+    assert.deepEqual(normalizeExplicitCustomerSource({
+      source_detail: "direct_signup"
     }), { normalizedSource: "unknown" });
 
     assert.equal(normalizeExplicitCustomerSource({

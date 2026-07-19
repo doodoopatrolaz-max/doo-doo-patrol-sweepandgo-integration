@@ -87,6 +87,30 @@ describe("Sweep&Go webhook BI processor", () => {
     assert.equal(store.services.size, 1);
   });
 
+  it("uses explicit direct website signup source markers from recurring onboarding", async () => {
+    const store = new InMemoryBiStore();
+    const processor = new SweepAndGoWebhookBiProcessor(store);
+
+    await processor.process(webhook({
+      eventType: "client:client_onboarding_recurring",
+      payload: {
+        data: {
+          client: "client-direct-website",
+          status: "active",
+          lead_source: "website",
+          original_source: "website",
+          source_detail: "direct_signup"
+        }
+      }
+    }));
+
+    const customer = store.customers.get("client-direct-website");
+    assert.equal(customer?.status, "active");
+    assert.equal(customer?.source, "website");
+    assert.equal(customer?.firstRecurringDate, "2026-06-22");
+    assert.equal(customer?.metadata.sourceDetail, "direct_signup");
+  });
+
   it("sets first_recurring_date once", async () => {
     const store = new InMemoryBiStore();
     const processor = new SweepAndGoWebhookBiProcessor(store);

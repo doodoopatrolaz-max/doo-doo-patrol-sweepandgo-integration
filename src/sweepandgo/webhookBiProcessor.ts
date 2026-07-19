@@ -21,6 +21,7 @@ type ParsedSweepAndGoWebhook = {
   source: NormalizedCustomerSource;
   sourceRaw?: string;
   sourceEvidenceField?: string;
+  sourceDetail?: string;
   eventTimestamp: string;
   eventDate: string;
   terminationReason?: string;
@@ -271,6 +272,7 @@ export function parseSweepAndGoWebhook(event: WebhookEvent): ParsedSweepAndGoWeb
     source: source.normalizedSource,
     sourceRaw: source.rawSource,
     sourceEvidenceField: source.evidenceField,
+    sourceDetail: firstString([data.source_detail, data.sourceDetail, root.source_detail, root.sourceDetail]),
     eventTimestamp,
     eventDate: phoenixDate(eventTimestamp),
     terminationReason: firstString([data.termination_reason, data.cancel_reason, data.cancellation_reason]),
@@ -291,6 +293,7 @@ function eventMetadata(
     eventFingerprint: event.eventFingerprint,
     eventTimestamp: parsed.eventTimestamp,
     sourceEvidenceField: parsed.sourceEvidenceField,
+    sourceDetail: parsed.sourceDetail,
     webhookBiProcessing: true,
     ...extra
   };

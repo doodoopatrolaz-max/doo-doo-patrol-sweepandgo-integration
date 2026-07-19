@@ -30,6 +30,8 @@ export function normalizeExplicitCustomerSource(record: unknown): SourceNormaliz
 
   const input = record as Record<string, unknown>;
   const candidates: Array<[string, unknown]> = [
+    ["lead_source", input.lead_source],
+    ["original_source", input.original_source],
     ["tracking_field", input.tracking_field],
     ["how_heard_answer", input.how_heard_answer],
     ["how_heard_about_us", input.how_heard_about_us],

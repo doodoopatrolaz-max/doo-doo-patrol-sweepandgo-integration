@@ -25,6 +25,14 @@ export type DashboardSummary = {
   averageMonthlyTicketReason?: string;
   estimatedMrrAdded: number | null;
   cancellations: number;
+  churnRate: number | null;
+  churnRateDenominator: number;
+  churnRateReason?: string;
+  lifetimeValue: number | null;
+  lifetimeValueReason?: string;
+  averageRevenuePerHour: number | null;
+  averageRevenuePerHourReason?: string;
+  revenuePerHourMetrics: DashboardRevenuePerHourMetrics;
   netRecurringCustomerGrowth: number;
   closeRate: number | null;
   closeRateMetrics: DashboardCloseRateMetrics;
@@ -50,7 +58,15 @@ export type DashboardCloseRateMetrics = {
   costPerNewCustomerStatus: DashboardCostPerNewCustomerStatus;
 };
 
-export type DashboardCostPerNewCustomerStatus = "available" | "no_ad_spend" | "no_new_customers";
+export type DashboardRevenuePerHourMetrics = {
+  revenueCollected: number;
+  laborHours: number;
+  paymentEvents: number;
+  payrollShiftEvents: number;
+  status: "available" | "unavailable";
+};
+
+export type DashboardCostPerNewCustomerStatus = "available" | "no_ad_spend" | "no_new_customers" | "unavailable_incomplete_spend_coverage";
 
 export type DashboardTrendPoint = {
   date: string;

@@ -1,5 +1,7 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import crypto from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { AppConfig } from "../config.ts";
 import { parseDashboardDateRange } from "../dashboard/dateRange.ts";
 import { renderDashboard, renderDashboardLogin } from "../dashboard/render.ts";
@@ -90,6 +92,11 @@ export function createRequestHandler(options: CreateAppOptions) {
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/assets/doo-doo-patrol-logo.png") {
+        await sendPngAsset(response, "public/assets/doo-doo-patrol-logo.png");
+        return;
+      }
+
       const webhookMatch = matchWebhookPath(url.pathname);
       if (request.method === "POST" && webhookMatch) {
         await receiveWebhook({
@@ -111,6 +118,19 @@ export function createRequestHandler(options: CreateAppOptions) {
       sendJson(response, 500, { error: "internal_server_error" });
     }
   };
+}
+
+async function sendPngAsset(response: ServerResponse, relativePath: string) {
+  try {
+    const bytes = await readFile(resolve(process.cwd(), relativePath));
+    response.writeHead(200, {
+      "content-type": "image/png",
+      "cache-control": "public, max-age=86400"
+    });
+    response.end(bytes);
+  } catch {
+    sendJson(response, 404, { error: "asset_not_found" });
+  }
 }
 
 async function handleDashboardPage(input: {

@@ -3,7 +3,9 @@ import type {
   DashboardCampaignRow,
   DashboardAdProviderStatus,
   DashboardCloseRateMetrics,
+  DashboardCostPerNewCustomerStatus,
   DashboardDataSource,
+  DashboardRevenuePerHourMetrics,
   DashboardSourceRow,
   DashboardSources,
   DashboardSummary,
@@ -17,6 +19,7 @@ type Queryable = {
 
 const SOURCES: DashboardSourceRow["source"][] = ["facebook", "website", "other", "unknown"];
 const DASHBOARD_LEAD_EXCLUSION_METRICS = "ARRAY['lead_denominator', 'dashboard_leads']";
+export const TEMP_AVERAGE_MONTHLY_TICKET = 95;
 
 export class PostgresDashboardDataSource implements DashboardDataSource {
   private readonly pool: Queryable;
@@ -26,12 +29,24 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getSummary(range: DashboardDateRange): Promise<DashboardSummary> {
-    const [adSpend, leads, customers, activeCustomers, cancellations, closeRateMetricsBase, googleAdsStatus] = await Promise.all([
+    const [
+      adSpend,
+      leads,
+      customers,
+      activeCustomers,
+      cancellations,
+      churnDenominator,
+      revenuePerHourMetrics,
+      closeRateMetricsBase,
+      googleAdsStatus
+    ] = await Promise.all([
       this.adSpendByPlatform(range),
       this.leadsBySource(range),
       this.newRecurringCustomers(range),
       this.activeRecurringCustomers(),
       this.cancellations(range),
+      this.activeCustomersAtRangeStart(range),
+      this.revenuePerHourMetrics(range),
       this.closeRateMetrics(range),
       this.googleAdsStatus()
     ]);
@@ -44,15 +59,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const totalAdSpend = adSpend.meta + adSpend.google;
     const estimatedMrrAdded = customers.mrrAdded === null ? null : roundMoney(customers.mrrAdded);
     const costPerNewCustomer = costPerNewRecurringCustomer(totalAdSpend, newRecurringCustomers);
-    const activeMrrAvailable = activeCustomers.activeClients > 0
-      && activeCustomers.pricedActiveClients === activeCustomers.activeClients;
-    const estimatedActiveMrr = activeMrrAvailable ? roundMoney(activeCustomers.activeMrr) : null;
-    const averageMonthlyTicket = activeMrrAvailable
-      ? roundMoney(activeCustomers.activeMrr / activeCustomers.activeClients)
+    const churnRate = churnDenominator > 0 ? percentage(cancellations, churnDenominator) : null;
+    const churnRateDecimal = churnRate === null ? null : churnRate / 100;
+    const lifetimeValue = churnRateDecimal && churnRateDecimal > 0
+      ? roundMoney(TEMP_AVERAGE_MONTHLY_TICKET / churnRateDecimal)
       : null;
-    const activeMrrUnavailableReason = activeMrrAvailable
-      ? undefined
-      : "Active recurring monthly subscription amounts are not available yet.";
+    const averageRevenuePerHour = revenuePerHourMetrics.status === "available" && revenuePerHourMetrics.laborHours > 0
+      ? roundMoney(revenuePerHourMetrics.revenueCollected / revenuePerHourMetrics.laborHours)
+      : null;
     const closeRateMetrics = {
       ...closeRateMetricsBase,
       costPerNewCustomerStatus: costPerNewCustomer.status
@@ -77,14 +91,26 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       costPerNewRecurringCustomer: costPerNewCustomer.value,
       costPerNewRecurringCustomerStatus: costPerNewCustomer.status,
       costPerNewRecurringCustomerNote: costPerNewCustomer.note,
-      estimatedActiveMrr,
-      estimatedActiveMrrReason: activeMrrUnavailableReason
-        ? "Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export."
-        : undefined,
-      averageMonthlyTicket,
-      averageMonthlyTicketReason: activeMrrUnavailableReason,
+      estimatedActiveMrr: null,
+      estimatedActiveMrrReason: undefined,
+      averageMonthlyTicket: TEMP_AVERAGE_MONTHLY_TICKET,
+      averageMonthlyTicketReason: "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.",
       estimatedMrrAdded,
       cancellations,
+      churnRate,
+      churnRateDenominator: churnDenominator,
+      churnRateReason: churnDenominator > 0
+        ? `Cancellations divided by ${churnDenominator} customers active at the start of the selected range.`
+        : "Churn unavailable because customers active at the start of the selected range could not be calculated.",
+      lifetimeValue,
+      lifetimeValueReason: lifetimeValue === null
+        ? "Lifetime value unavailable when churn is zero or unavailable."
+        : "Average Monthly Ticket divided by Monthly Churn Rate.",
+      averageRevenuePerHour,
+      averageRevenuePerHourReason: averageRevenuePerHour === null
+        ? "Average Revenue Per Hour unavailable until stored accepted-payment events and payroll shift hours both cover the selected range."
+        : "Accepted payment revenue divided by payroll shift labor hours from stored Sweep&Go webhook data.",
+      revenuePerHourMetrics,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations,
       closeRate: closeRateMetrics.totalCloseRate,
       closeRateMetrics,
@@ -92,8 +118,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         googleAdsStatus,
         totalLeads,
         newRecurringCustomers,
-        estimatedActiveMrr,
-        averageMonthlyTicket,
+        churnRate,
+        lifetimeValue,
+        revenuePerHourMetrics,
         closeRateMetrics,
         costPerNewRecurringCustomerStatus: costPerNewCustomer.status,
         costPerNewRecurringCustomerNote: costPerNewCustomer.note,
@@ -461,6 +488,112 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     return integerValue(result.rows[0]?.count);
   }
 
+  private async activeCustomersAtRangeStart(range: DashboardDateRange): Promise<number> {
+    const result = await this.pool.query(
+      `SELECT COUNT(*)::int AS active_at_start
+       FROM customers
+       WHERE first_recurring_date IS NOT NULL
+         AND first_recurring_date < $1::date
+         AND (cancellation_date IS NULL OR cancellation_date >= $1::date)`,
+      [range.startDate]
+    );
+    return integerValue(result.rows[0]?.active_at_start);
+  }
+
+  private async revenuePerHourMetrics(range: DashboardDateRange): Promise<DashboardRevenuePerHourMetrics> {
+    const [revenueResult, laborResult] = await Promise.all([
+      this.pool.query(
+        `WITH payment_events AS (
+           SELECT DISTINCT ON (event_fingerprint)
+                  received_at,
+                  payload
+           FROM webhook_events
+           WHERE event_type IN ('client:client_payment_accepted', 'commercial:client_payment_accepted')
+             AND processing_status <> 'failed'
+           ORDER BY event_fingerprint, received_at DESC
+         ),
+         parsed_payments AS (
+           SELECT received_at::date AS payment_date,
+                  NULLIF(regexp_replace(
+                    COALESCE(
+                      payload->'data'->>'amount',
+                      payload->'data'->>'paid',
+                      payload->'data'->>'total',
+                      payload->>'amount',
+                      payload->>'paid',
+                      payload->>'total',
+                      ''
+                    ),
+                    '[^0-9.-]',
+                    '',
+                    'g'
+                  ), '') AS amount_text
+           FROM payment_events
+         )
+         SELECT COUNT(*) FILTER (WHERE amount_text ~ '^-?[0-9]+(\\.[0-9]+)?$')::int AS payment_events,
+                COALESCE(SUM(
+                  CASE
+                    WHEN amount_text ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN amount_text::numeric
+                    ELSE 0
+                  END
+                ), 0)::float AS revenue_collected
+         FROM parsed_payments
+         WHERE payment_date BETWEEN $1::date AND $2::date`,
+        [range.startDate, range.endDate]
+      ),
+      this.pool.query(
+        `WITH shift_events AS (
+           SELECT DISTINCT ON (event_fingerprint)
+                  received_at,
+                  payload
+           FROM webhook_events
+           WHERE event_type = 'payroll:shift_info'
+             AND processing_status <> 'failed'
+           ORDER BY event_fingerprint, received_at DESC
+         ),
+         parsed_shifts AS (
+           SELECT
+             CASE
+               WHEN COALESCE(payload->'data'->>'shift_date', payload->>'shift_date', '') ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                 THEN COALESCE(payload->'data'->>'shift_date', payload->>'shift_date')::date
+               ELSE received_at::date
+             END AS shift_date,
+             NULLIF(regexp_replace(
+               COALESCE(payload->'data'->>'duration_time', payload->>'duration_time', ''),
+               '[^0-9.-]',
+               '',
+               'g'
+             ), '') AS duration_minutes_text
+           FROM shift_events
+         )
+         SELECT COUNT(*) FILTER (WHERE duration_minutes_text ~ '^[0-9]+(\\.[0-9]+)?$')::int AS payroll_shift_events,
+                COALESCE(SUM(
+                  CASE
+                    WHEN duration_minutes_text ~ '^[0-9]+(\\.[0-9]+)?$' THEN duration_minutes_text::numeric / 60
+                    ELSE 0
+                  END
+                ), 0)::float AS labor_hours
+         FROM parsed_shifts
+         WHERE shift_date BETWEEN $1::date AND $2::date`,
+        [range.startDate, range.endDate]
+      )
+    ]);
+    const revenueRow = revenueResult.rows[0] ?? {};
+    const laborRow = laborResult.rows[0] ?? {};
+    const revenueCollected = roundMoney(numberValue(revenueRow.revenue_collected));
+    const laborHours = roundMoney(numberValue(laborRow.labor_hours));
+    const paymentEvents = integerValue(revenueRow.payment_events);
+    const payrollShiftEvents = integerValue(laborRow.payroll_shift_events);
+
+    return {
+      revenueCollected,
+      laborHours,
+      paymentEvents,
+      payrollShiftEvents,
+      status: revenueCollected > 0 && laborHours > 0 ? "available" : "unavailable"
+    };
+  }
+
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
     const [leadRows, matchRows] = await Promise.all([
       this.pool.query(
@@ -526,11 +659,25 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       costPerNewRecurringCustomerStatus: "no_ad_spend",
       costPerNewRecurringCustomerNote: "No ad spend",
       estimatedActiveMrr: null,
-      estimatedActiveMrrReason: "Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export.",
-      averageMonthlyTicket: null,
-      averageMonthlyTicketReason: "Active recurring monthly subscription amounts are not available yet.",
+      estimatedActiveMrrReason: undefined,
+      averageMonthlyTicket: TEMP_AVERAGE_MONTHLY_TICKET,
+      averageMonthlyTicketReason: "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.",
       estimatedMrrAdded: null,
       cancellations: 0,
+      churnRate: null,
+      churnRateDenominator: 0,
+      churnRateReason: "Churn unavailable because no database connection is configured.",
+      lifetimeValue: null,
+      lifetimeValueReason: "Lifetime value unavailable when churn is zero or unavailable.",
+      averageRevenuePerHour: null,
+      averageRevenuePerHourReason: "Average Revenue Per Hour unavailable because no database connection is configured.",
+      revenuePerHourMetrics: {
+        revenueCollected: 0,
+        laborHours: 0,
+        paymentEvents: 0,
+        payrollShiftEvents: 0,
+        status: "unavailable"
+      },
       netRecurringCustomerGrowth: 0,
       closeRate: null,
       closeRateMetrics: emptyCloseRateMetrics(),
@@ -609,10 +756,11 @@ function dataNotes(input: {
   googleAdsStatus: DashboardAdProviderStatus;
   totalLeads: number;
   newRecurringCustomers: number;
-  estimatedActiveMrr: number | null;
-  averageMonthlyTicket: number | null;
+  churnRate: number | null;
+  lifetimeValue: number | null;
+  revenuePerHourMetrics: DashboardRevenuePerHourMetrics;
   closeRateMetrics: DashboardCloseRateMetrics;
-  costPerNewRecurringCustomerStatus: "available" | "no_ad_spend" | "no_new_customers";
+  costPerNewRecurringCustomerStatus: DashboardCostPerNewCustomerStatus;
   costPerNewRecurringCustomerNote: string;
   sweepAndGoLiveWebhookProcessingActive?: boolean;
 }): string[] {
@@ -631,11 +779,15 @@ function dataNotes(input: {
   if (input.newRecurringCustomers === 0) {
     notes.push("No new recurring Sweep&Go customers found for this range.");
   }
-  if (input.estimatedActiveMrr === null) {
-    notes.push("Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export.");
+  notes.push(`Average Monthly Ticket is currently configured at $${TEMP_AVERAGE_MONTHLY_TICKET.toFixed(2)}.`);
+  if (input.churnRate === null) {
+    notes.push("Churn Rate is unavailable until customers active at the start of the selected range can be calculated.");
   }
-  if (input.averageMonthlyTicket === null) {
-    notes.push("Average Monthly Ticket: waiting on a reliable subscription amount source.");
+  if (input.lifetimeValue === null) {
+    notes.push("Lifetime Value uses Average Monthly Ticket divided by Monthly Churn Rate; it is unavailable when churn is zero or unavailable.");
+  }
+  if (input.revenuePerHourMetrics.status !== "available") {
+    notes.push("Average Revenue Per Hour is unavailable until accepted payment events and payroll shift hours both exist for the selected range.");
   }
   if (input.costPerNewRecurringCustomerStatus !== "available") {
     notes.push(`Cost per new customer note: ${input.costPerNewRecurringCustomerNote}.`);

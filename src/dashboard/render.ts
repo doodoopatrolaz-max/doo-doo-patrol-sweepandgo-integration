@@ -34,10 +34,13 @@ export function renderDashboard(data: DashboardData): string {
     title: "Doo Doo Patrol KPI Dashboard",
     body: `
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Someone's gotta Doo it</p>
-          <h1>Doo Doo Patrol KPI Dashboard</h1>
-          <p class="subtitle">Clean yards. Clean data.</p>
+        <div class="brand-lockup">
+          <img class="brand-logo" src="/assets/doo-doo-patrol-logo.png" alt="Doo Doo Patrol">
+          <div>
+            <p class="eyebrow">Someone's gotta Doo it</p>
+            <h1>Doo Doo Patrol KPI Dashboard</h1>
+            <p class="subtitle">Clean yards. Clean data.</p>
+          </div>
         </div>
         <a class="logout" href="/dashboard/logout">Log out</a>
       </header>
@@ -91,6 +94,26 @@ function renderSummary(summary: DashboardSummary): string {
     { label: "Total Leads", value: String(summary.totalLeads) },
     { label: "New Recurring Customers", value: String(summary.newRecurringCustomers) },
     { label: "Close Rate", value: maybePercent(summary.closeRateMetrics.totalCloseRate) },
+    {
+      label: "Churn Rate",
+      value: maybePercent(summary.churnRate),
+      note: summary.churnRateReason
+    },
+    {
+      label: "Average Monthly Ticket",
+      value: money(summary.averageMonthlyTicket ?? 0),
+      note: summary.averageMonthlyTicketReason
+    },
+    {
+      label: "Lifetime Value",
+      value: maybeMoney(summary.lifetimeValue),
+      note: summary.lifetimeValueReason
+    },
+    {
+      label: "Average Revenue Per Hour",
+      value: maybeMoney(summary.averageRevenuePerHour),
+      note: summary.averageRevenuePerHourReason
+    },
     { label: "Net Customer Growth", value: signed(summary.netRecurringCustomerGrowth) },
     { label: "Total Ad Spend", value: money(summary.totalAdSpend) }
   ];
@@ -285,7 +308,9 @@ function pageShell(input: { title: string; body: string }): string {
     :root { --blue:#00a8ff; --navy:#102a43; --charcoal:#263238; --soft:#eef8ff; --line:#d8e7f1; --green:#17a673; }
     * { box-sizing:border-box; }
     body { margin:0; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--charcoal); background:#f7fbff; }
-    .topbar { display:flex; justify-content:space-between; gap:16px; align-items:center; padding:28px clamp(18px, 4vw, 48px); background:linear-gradient(135deg, #00a8ff, #0477bf); color:white; }
+    .topbar { display:flex; justify-content:space-between; gap:16px; align-items:center; padding:22px clamp(18px, 4vw, 48px); background:linear-gradient(135deg, #00a8ff, #0477bf); color:white; }
+    .brand-lockup { display:flex; align-items:center; gap:18px; min-width:0; }
+    .brand-logo { width:92px; height:92px; object-fit:contain; flex:0 0 auto; filter:drop-shadow(0 10px 18px rgba(16,42,67,.2)); }
     .eyebrow { margin:0 0 6px; font-weight:800; letter-spacing:0; text-transform:uppercase; font-size:0.78rem; }
     h1 { margin:0; font-size:clamp(1.8rem, 4vw, 3.4rem); letter-spacing:0; }
     h2 { margin:0 0 14px; color:var(--navy); font-size:1.15rem; }
@@ -303,7 +328,7 @@ function pageShell(input: { title: string; body: string }): string {
     button { background:var(--blue); color:white; min-height:40px; }
     .range-label, .muted { color:#557083; margin:12px 0 0; }
     .cards { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
-    .owner-scoreboard.primary { grid-template-columns:repeat(6, minmax(0, 1fr)); }
+    .owner-scoreboard.primary { grid-template-columns:repeat(5, minmax(0, 1fr)); }
     .owner-scoreboard.secondary { grid-template-columns:repeat(5, minmax(0, 1fr)); margin-top:12px; }
     .card { background:white; border:1px solid var(--line); border-radius:8px; padding:16px; min-height:104px; box-shadow:0 8px 24px rgba(16,42,67,.06); }
     .card span { display:block; color:#557083; font-weight:700; min-height:38px; }
@@ -330,7 +355,8 @@ function pageShell(input: { title: string; body: string }): string {
     .error { color:#b42318; font-weight:800; margin:0; }
     code { background:var(--soft); padding:2px 5px; border-radius:5px; }
     @media (max-width: 1100px) { .owner-scoreboard.primary, .owner-scoreboard.secondary { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
-    @media (max-width: 850px) { .topbar { align-items:flex-start; flex-direction:column; } .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary, .grid-two { grid-template-columns:1fr; } .bar-row { grid-template-columns:48px 1fr 64px; } }
+    @media (max-width: 850px) { .topbar { align-items:flex-start; flex-direction:column; } .brand-lockup { align-items:flex-start; } .brand-logo { width:74px; height:74px; } .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary, .grid-two { grid-template-columns:1fr; } .bar-row { grid-template-columns:48px 1fr 64px; } }
+    @media (max-width: 520px) { .brand-lockup { flex-direction:column; gap:10px; } .brand-logo { width:88px; height:88px; } }
   </style>
 </head>
 <body>${input.body}</body>

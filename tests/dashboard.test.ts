@@ -63,8 +63,17 @@ class FakePool {
         }]
       };
     }
+    if (sql.includes("active_at_start")) {
+      return { rows: [{ active_at_start: 20 }] };
+    }
     if (sql.includes("FROM cancellations")) {
       return { rows: [{ count: 1 }] };
+    }
+    if (sql.includes("client_payment_accepted")) {
+      return { rows: [{ payment_events: 4, revenue_collected: 570 }] };
+    }
+    if (sql.includes("payroll:shift_info")) {
+      return { rows: [{ payroll_shift_events: 3, labor_hours: 6 }] };
     }
     return { rows: [] };
   }
@@ -188,11 +197,25 @@ const summaryOnlyDataSource: DashboardDataSource = {
       costPerNewRecurringCustomerStatus: "no_new_customers",
       costPerNewRecurringCustomerNote: "No new customers",
       estimatedActiveMrr: null,
-      estimatedActiveMrrReason: "Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export.",
-      averageMonthlyTicket: null,
-      averageMonthlyTicketReason: "Active recurring monthly subscription amounts are not available yet.",
+      estimatedActiveMrrReason: undefined,
+      averageMonthlyTicket: 95,
+      averageMonthlyTicketReason: "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.",
       estimatedMrrAdded: null,
       cancellations: 0,
+      churnRate: 0,
+      churnRateDenominator: 12,
+      churnRateReason: "Cancellations divided by 12 customers active at the start of the selected range.",
+      lifetimeValue: null,
+      lifetimeValueReason: "Lifetime value unavailable when churn is zero or unavailable.",
+      averageRevenuePerHour: null,
+      averageRevenuePerHourReason: "Average Revenue Per Hour unavailable until stored accepted-payment events and payroll shift hours both cover the selected range.",
+      revenuePerHourMetrics: {
+        revenueCollected: 0,
+        laborHours: 0,
+        paymentEvents: 0,
+        payrollShiftEvents: 0,
+        status: "unavailable"
+      },
       netRecurringCustomerGrowth: 0,
       closeRate: null,
       closeRateMetrics: {
@@ -205,7 +228,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
         totalCloseRate: null,
         costPerNewCustomerStatus: "no_new_customers"
       },
-      dataNotes: ["Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export."]
+      dataNotes: ["Average Monthly Ticket is currently configured at $95.00."]
     } satisfies DashboardSummary;
   },
   async getTrends() {
@@ -277,10 +300,16 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.costPerNewRecurringCustomer, 75);
     assert.equal(summary.costPerNewRecurringCustomerStatus, "available");
     assert.equal(summary.costPerNewRecurringCustomerNote, "Ad spend divided by new recurring customers");
-    assert.equal(summary.estimatedActiveMrr, 316);
-    assert.equal(summary.averageMonthlyTicket, 79);
+    assert.equal(summary.estimatedActiveMrr, null);
+    assert.equal(summary.averageMonthlyTicket, 95);
     assert.equal(summary.estimatedMrrAdded, 60);
     assert.equal(summary.cancellations, 1);
+    assert.equal(summary.churnRate, 5);
+    assert.equal(summary.churnRateDenominator, 20);
+    assert.equal(summary.lifetimeValue, 1900);
+    assert.equal(summary.averageRevenuePerHour, 95);
+    assert.equal(summary.revenuePerHourMetrics.paymentEvents, 4);
+    assert.equal(summary.revenuePerHourMetrics.payrollShiftEvents, 3);
     assert.equal(summary.netRecurringCustomerGrowth, 1);
     assert.equal(summary.closeRateMetrics.facebookMatchedConversions, 0);
     assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 3);
@@ -318,12 +347,12 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.costPerNewRecurringCustomer, 0);
     assert.equal(summary.costPerNewRecurringCustomerStatus, "no_ad_spend");
     assert.equal(summary.estimatedActiveMrr, null);
-    assert.equal(summary.averageMonthlyTicket, null);
+    assert.equal(summary.averageMonthlyTicket, 95);
     assert.equal(summary.closeRateMetrics.totalMatchedConversions, 0);
     assert(summary.dataNotes.some((note) => note.includes("No database")));
   });
 
-  it("renders the cleaned owner scoreboard order without revenue-unavailable cards", async () => {
+  it("renders the cleaned owner scoreboard order with configured owner KPIs", async () => {
     const summary = await new PostgresDashboardDataSource(new FakePool())
       .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
     const html = renderDashboard(dashboardData(summary));
@@ -332,12 +361,18 @@ describe("dashboard KPI aggregation", () => {
     assert(html.indexOf("Total Active Clients") < html.indexOf("Total Leads"));
     assert(html.indexOf("Total Leads") < html.indexOf("New Recurring Customers"));
     assert(html.indexOf("New Recurring Customers") < html.indexOf("Close Rate"));
-    assert(html.indexOf("Close Rate") < html.indexOf("Net Customer Growth"));
+    assert(html.indexOf("Close Rate") < html.indexOf("Churn Rate"));
+    assert(html.indexOf("Churn Rate") < html.indexOf("Average Monthly Ticket"));
+    assert(html.indexOf("Average Monthly Ticket") < html.indexOf("Lifetime Value"));
+    assert(html.indexOf("Lifetime Value") < html.indexOf("Average Revenue Per Hour"));
+    assert(html.indexOf("Average Revenue Per Hour") < html.indexOf("Net Customer Growth"));
     assert(html.indexOf("Net Customer Growth") < html.indexOf("Total Ad Spend"));
     assert(html.indexOf("Total Ad Spend") < html.indexOf("Meta Spend"));
-    assert(!html.includes("<span>Average Monthly Ticket</span>"));
     assert(!html.includes("<span>Estimated MRR</span>"));
+    assert(html.includes("<span>Average Monthly Ticket</span>"));
+    assert(html.includes("$95.00"));
     assert(html.includes("As of latest Sweep&amp;Go active roster snapshot"));
+    assert(html.includes("/assets/doo-doo-patrol-logo.png"));
   });
 
   it("uses the latest Sweep&Go active roster snapshot for Total Active Clients", async () => {
@@ -349,10 +384,10 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalActiveClientsNeedsVerification, false);
     assert.equal(summary.totalActiveClientsSource, "Latest Sweep&Go active roster snapshot from the official active client count.");
     assert.equal(summary.estimatedActiveMrr, null);
-    assert.equal(summary.averageMonthlyTicket, null);
+    assert.equal(summary.averageMonthlyTicket, 95);
   });
 
-  it("moves revenue-source gaps to Data Notes instead of visible dashboard cards", async () => {
+  it("keeps MRR hidden while showing configured average ticket and revenue-per-hour notes", async () => {
     class MissingPricePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
@@ -366,6 +401,12 @@ describe("dashboard KPI aggregation", () => {
             }]
           };
         }
+        if (sql.includes("client_payment_accepted")) {
+          return { rows: [{ payment_events: 0, revenue_collected: 0 }] };
+        }
+        if (sql.includes("payroll:shift_info")) {
+          return { rows: [{ payroll_shift_events: 0, labor_hours: 0 }] };
+        }
         return await super.query(sql, params);
       }
     }
@@ -373,16 +414,15 @@ describe("dashboard KPI aggregation", () => {
       .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
     const html = renderDashboard(dashboardData(summary));
 
-    assert.equal(summary.averageMonthlyTicket, null);
+    assert.equal(summary.averageMonthlyTicket, 95);
     assert.equal(summary.estimatedActiveMrr, null);
-    assert.equal(summary.averageMonthlyTicketReason, "Active recurring monthly subscription amounts are not available yet.");
-    assert(!html.includes("<span>Average Monthly Ticket</span>"));
+    assert.equal(summary.averageMonthlyTicketReason, "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.");
+    assert(html.includes("<span>Average Monthly Ticket</span>"));
     assert(!html.includes("<span>Estimated MRR</span>"));
     assert(!html.includes("<strong>Unavailable</strong>"));
-    assert(summary.dataNotes.some((note) => note.includes("Estimated MRR is hidden for now")));
-    assert(summary.dataNotes.some((note) => note.includes("Average Monthly Ticket: waiting on a reliable subscription amount source")));
-    assert(html.includes("Estimated MRR is hidden for now"));
-    assert(html.includes("Average Monthly Ticket: waiting on a reliable subscription amount source"));
+    assert(summary.dataNotes.some((note) => note.includes("Average Monthly Ticket is currently configured")));
+    assert(summary.dataNotes.some((note) => note.includes("Average Revenue Per Hour is unavailable")));
+    assert(!html.includes("Estimated MRR is hidden for now"));
   });
 
   it("shows Facebook close rate as 0% when Facebook leads and conversions are both zero", async () => {

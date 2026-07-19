@@ -188,7 +188,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
       costPerNewRecurringCustomerStatus: "no_new_customers",
       costPerNewRecurringCustomerNote: "No new customers",
       estimatedActiveMrr: null,
-      estimatedActiveMrrReason: "Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source.",
+      estimatedActiveMrrReason: "Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export.",
       averageMonthlyTicket: null,
       averageMonthlyTicketReason: "Active recurring monthly subscription amounts are not available yet.",
       estimatedMrrAdded: null,
@@ -205,7 +205,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
         totalCloseRate: null,
         costPerNewCustomerStatus: "no_new_customers"
       },
-      dataNotes: ["Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source."]
+      dataNotes: ["Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export."]
     } satisfies DashboardSummary;
   },
   async getTrends() {
@@ -323,15 +323,20 @@ describe("dashboard KPI aggregation", () => {
     assert(summary.dataNotes.some((note) => note.includes("No database")));
   });
 
-  it("renders Total Active Clients and Average Monthly Ticket in the owner scoreboard", async () => {
+  it("renders the cleaned owner scoreboard order without revenue-unavailable cards", async () => {
     const summary = await new PostgresDashboardDataSource(new FakePool())
       .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
     const html = renderDashboard(dashboardData(summary));
 
     assert(html.includes("Owner Scoreboard"));
     assert(html.indexOf("Total Active Clients") < html.indexOf("Total Leads"));
-    assert(html.includes("Average Monthly Ticket"));
-    assert(html.includes("$79.00"));
+    assert(html.indexOf("Total Leads") < html.indexOf("New Recurring Customers"));
+    assert(html.indexOf("New Recurring Customers") < html.indexOf("Close Rate"));
+    assert(html.indexOf("Close Rate") < html.indexOf("Net Customer Growth"));
+    assert(html.indexOf("Net Customer Growth") < html.indexOf("Total Ad Spend"));
+    assert(html.indexOf("Total Ad Spend") < html.indexOf("Meta Spend"));
+    assert(!html.includes("<span>Average Monthly Ticket</span>"));
+    assert(!html.includes("<span>Estimated MRR</span>"));
     assert(html.includes("As of latest Sweep&amp;Go active roster snapshot"));
   });
 
@@ -347,7 +352,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.averageMonthlyTicket, null);
   });
 
-  it("shows Average Monthly Ticket unavailable when active subscription amounts are incomplete", async () => {
+  it("moves revenue-source gaps to Data Notes instead of visible dashboard cards", async () => {
     class MissingPricePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
@@ -371,10 +376,13 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.averageMonthlyTicket, null);
     assert.equal(summary.estimatedActiveMrr, null);
     assert.equal(summary.averageMonthlyTicketReason, "Active recurring monthly subscription amounts are not available yet.");
-    assert(html.includes("Average Monthly Ticket"));
-    assert(html.includes("Estimated MRR"));
-    assert(html.includes("Unavailable"));
-    assert(summary.dataNotes.some((note) => note.includes("Estimated MRR is unavailable until active recurring subscription amounts are captured")));
+    assert(!html.includes("<span>Average Monthly Ticket</span>"));
+    assert(!html.includes("<span>Estimated MRR</span>"));
+    assert(!html.includes("<strong>Unavailable</strong>"));
+    assert(summary.dataNotes.some((note) => note.includes("Estimated MRR is hidden for now")));
+    assert(summary.dataNotes.some((note) => note.includes("Average Monthly Ticket: waiting on a reliable subscription amount source")));
+    assert(html.includes("Estimated MRR is hidden for now"));
+    assert(html.includes("Average Monthly Ticket: waiting on a reliable subscription amount source"));
   });
 
   it("shows Facebook close rate as 0% when Facebook leads and conversions are both zero", async () => {

@@ -79,7 +79,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       costPerNewRecurringCustomerNote: costPerNewCustomer.note,
       estimatedActiveMrr,
       estimatedActiveMrrReason: activeMrrUnavailableReason
-        ? "Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source."
+        ? "Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export."
         : undefined,
       averageMonthlyTicket,
       averageMonthlyTicketReason: activeMrrUnavailableReason,
@@ -526,7 +526,7 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       costPerNewRecurringCustomerStatus: "no_ad_spend",
       costPerNewRecurringCustomerNote: "No ad spend",
       estimatedActiveMrr: null,
-      estimatedActiveMrrReason: "Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source.",
+      estimatedActiveMrrReason: "Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export.",
       averageMonthlyTicket: null,
       averageMonthlyTicketReason: "Active recurring monthly subscription amounts are not available yet.",
       estimatedMrrAdded: null,
@@ -632,10 +632,10 @@ function dataNotes(input: {
     notes.push("No new recurring Sweep&Go customers found for this range.");
   }
   if (input.estimatedActiveMrr === null) {
-    notes.push("Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source.");
+    notes.push("Estimated MRR is hidden for now. It will return when Sweep&Go exposes reliable active subscription amounts or a safe subscription export.");
   }
   if (input.averageMonthlyTicket === null) {
-    notes.push("Average monthly ticket is unavailable until active recurring monthly subscription amounts are available for active clients.");
+    notes.push("Average Monthly Ticket: waiting on a reliable subscription amount source.");
   }
   if (input.costPerNewRecurringCustomerStatus !== "available") {
     notes.push(`Cost per new customer note: ${input.costPerNewRecurringCustomerNote}.`);

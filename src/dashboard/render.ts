@@ -88,18 +88,13 @@ function renderSummary(summary: DashboardSummary): string {
       value: summary.totalActiveClients === null ? "Needs verification" : String(summary.totalActiveClients),
       note: activeClientsNote
     },
-    {
-      label: "Average Monthly Ticket",
-      value: summary.averageMonthlyTicket === null ? "Unavailable" : money(summary.averageMonthlyTicket),
-      note: summary.averageMonthlyTicketReason
-    },
     { label: "Total Leads", value: String(summary.totalLeads) },
     { label: "New Recurring Customers", value: String(summary.newRecurringCustomers) },
     { label: "Close Rate", value: maybePercent(summary.closeRateMetrics.totalCloseRate) },
-    { label: "Net Customer Growth", value: signed(summary.netRecurringCustomerGrowth) }
+    { label: "Net Customer Growth", value: signed(summary.netRecurringCustomerGrowth) },
+    { label: "Total Ad Spend", value: money(summary.totalAdSpend) }
   ];
   const secondaryCards: DashboardCard[] = [
-    { label: "Total Ad Spend", value: money(summary.totalAdSpend) },
     { label: "Meta Spend", value: money(summary.metaSpend) },
     {
       label: "Google Spend",
@@ -112,12 +107,7 @@ function renderSummary(summary: DashboardSummary): string {
       value: maybeMoney(summary.costPerNewRecurringCustomer),
       note: summary.costPerNewRecurringCustomerNote
     },
-    { label: "Cancellations", value: String(summary.cancellations) },
-    {
-      label: "Estimated MRR",
-      value: summary.estimatedActiveMrr === null ? "Unavailable" : money(summary.estimatedActiveMrr),
-      note: summary.estimatedActiveMrrReason
-    }
+    { label: "Cancellations", value: String(summary.cancellations) }
   ];
 
   return `
@@ -314,7 +304,7 @@ function pageShell(input: { title: string; body: string }): string {
     .range-label, .muted { color:#557083; margin:12px 0 0; }
     .cards { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
     .owner-scoreboard.primary { grid-template-columns:repeat(6, minmax(0, 1fr)); }
-    .owner-scoreboard.secondary { grid-template-columns:repeat(7, minmax(0, 1fr)); margin-top:12px; }
+    .owner-scoreboard.secondary { grid-template-columns:repeat(5, minmax(0, 1fr)); margin-top:12px; }
     .card { background:white; border:1px solid var(--line); border-radius:8px; padding:16px; min-height:104px; box-shadow:0 8px 24px rgba(16,42,67,.06); }
     .card span { display:block; color:#557083; font-weight:700; min-height:38px; }
     .card strong { display:block; color:var(--navy); font-size:clamp(1.25rem, 3vw, 2rem); margin-top:8px; overflow-wrap:anywhere; }

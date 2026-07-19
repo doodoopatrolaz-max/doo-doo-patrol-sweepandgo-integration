@@ -153,12 +153,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       averageRevenuePerHour,
       averageRevenuePerHourReason: averageRevenuePerHour === null
         ? (revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.")
-        : "Revenue includes completed priced jobs. Service hours exclude zero-duration rows. Missing-price completed jobs are flagged.",
+        : "Completed priced job revenue divided by KPI service time. Skipped, missed, canceled, and zero-minute rows do not add service time; same-stop scoop/spray revenue stays included.",
       revenuePerHourMetrics,
       averageRevenuePerShiftHour,
       averageRevenuePerShiftHourReason: averageRevenuePerShiftHour === null
         ? (revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour unavailable until stored Sweep&Go payroll shift rows include usable shift duration.")
-        : "Completed job revenue divided by stored Sweep&Go Time & Mileage shift rows, deduped by employee, date, and shift.",
+        : "Completed priced job revenue divided by recorded Sweep&Go shift hours, including route, drive, break, and admin time captured in shifts.",
       revenuePerShiftHourMetrics,
       priorPeriodLeadConversions,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
@@ -989,12 +989,12 @@ function dataNotes(input: {
   if (input.revenuePerHourMetrics.status !== "available") {
     notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour is unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.");
   } else {
-    notes.push("Average Revenue Per Service Hour uses completed priced job revenue divided by positive recorded service time. Zero-duration completed revenue is included in revenue but not service hours; missing-price completed jobs are flagged.");
+    notes.push("Average Revenue Per Service Hour uses completed priced job revenue divided by KPI-eligible recorded service time. Zero-minute same-stop spray revenue is included, but zero-minute rows do not add service time; missing-price jobs are flagged.");
   }
   if (input.revenuePerShiftHourMetrics.status !== "available") {
     notes.push(input.revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour is unavailable until stored Sweep&Go payroll shift rows include usable shift duration.");
   } else {
-    notes.push("Average Revenue Per Shift Hour uses completed job revenue divided by stored Sweep&Go Time & Mileage payroll shift rows, deduped by employee, date, and shift.");
+    notes.push("Average Revenue Per Shift Hour uses completed priced job revenue divided by deduped Sweep&Go Time & Mileage shift hours, including route, drive, break, and admin time captured in shifts.");
   }
   if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {
     notes.push(`${input.closeRateMetrics.totalPriorPeriodLeadConversions} conversion(s) in this range came from leads created before the selected period; they do not increase the selected-period lead count.`);

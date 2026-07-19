@@ -455,7 +455,8 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.churnRateDenominator, 20);
     assert.equal(summary.lifetimeValue, 1900);
     assert.equal(summary.averageRevenuePerHour, 160);
-    assert.equal(summary.averageRevenuePerHourReason, "Revenue includes completed priced jobs. Service hours exclude zero-duration rows. Missing-price completed jobs are flagged.");
+    assert.equal(summary.averageRevenuePerHourReason, "Completed priced job revenue divided by KPI service time. Skipped, missed, canceled, and zero-minute rows do not add service time; same-stop scoop/spray revenue stays included.");
+    assert(summary.dataNotes.includes("Average Revenue Per Service Hour uses completed priced job revenue divided by KPI-eligible recorded service time. Zero-minute same-stop spray revenue is included, but zero-minute rows do not add service time; missing-price jobs are flagged."));
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
     assert.equal(summary.revenuePerHourMetrics.serviceHours, 0.5);
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
@@ -861,6 +862,8 @@ describe("dashboard KPI aggregation", () => {
     ]);
     assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 3.5);
     assert.equal(summary.averageRevenuePerShiftHour, 22.86);
+    assert.equal(summary.averageRevenuePerShiftHourReason, "Completed priced job revenue divided by recorded Sweep&Go shift hours, including route, drive, break, and admin time captured in shifts.");
+    assert(summary.dataNotes.includes("Average Revenue Per Shift Hour uses completed priced job revenue divided by deduped Sweep&Go Time & Mileage shift hours, including route, drive, break, and admin time captured in shifts."));
     assert(html.includes("Average Revenue Per Shift Hour"));
     assert(html.includes("Service Productivity"));
   });

@@ -53,6 +53,16 @@ class FakePool {
     if (sql.includes("SUM(monthly_recurring_revenue)")) {
       return { rows: [{ count: 2, mrr_added: 60, priced_count: 2 }] };
     }
+    if (sql.includes("FROM customers c")) {
+      return {
+        rows: [{
+          active_clients: 4,
+          active_mrr: 316,
+          priced_active_clients: 4,
+          latest_sweepandgo_sync_started_at: "2026-06-22T11:00:00.000Z"
+        }]
+      };
+    }
     if (sql.includes("FROM cancellations")) {
       return { rows: [{ count: 1 }] };
     }
@@ -141,9 +151,19 @@ const summaryOnlyDataSource: DashboardDataSource = {
       websiteLeads: 0,
       otherLeads: 0,
       totalLeads: 1,
+      totalActiveClients: 12,
+      totalActiveClientsSource: "Sweep&Go BI customers where status is active and at least one recurring service is present.",
+      totalActiveClientsAsOf: "2026-06-22T11:00:00.000Z",
+      totalActiveClientsNeedsVerification: false,
       newRecurringCustomers: 0,
       costPerLead: 10,
       costPerNewRecurringCustomer: null,
+      costPerNewRecurringCustomerStatus: "no_new_customers",
+      costPerNewRecurringCustomerNote: "No new customers",
+      estimatedActiveMrr: null,
+      estimatedActiveMrrReason: "Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source.",
+      averageMonthlyTicket: null,
+      averageMonthlyTicketReason: "Active recurring monthly subscription amounts are not available yet.",
       estimatedMrrAdded: null,
       cancellations: 0,
       netRecurringCustomerGrowth: 0,
@@ -156,9 +176,9 @@ const summaryOnlyDataSource: DashboardDataSource = {
         facebookCloseRate: null,
         websiteCloseRate: null,
         totalCloseRate: null,
-        costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
+        costPerNewCustomerStatus: "no_new_customers"
       },
-      dataNotes: ["Cost per new customer is unavailable until Meta and Google Ads spend coverage is complete for the selected date range."]
+      dataNotes: ["Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source."]
     } satisfies DashboardSummary;
   },
   async getTrends() {
@@ -222,9 +242,16 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.websiteLeads, 2);
     assert.equal(summary.otherLeads, 1);
     assert.equal(summary.totalLeads, 6);
+    assert.equal(summary.totalActiveClients, 4);
+    assert.equal(summary.totalActiveClientsNeedsVerification, false);
+    assert.equal(summary.totalActiveClientsAsOf, "2026-06-22T11:00:00.000Z");
     assert.equal(summary.newRecurringCustomers, 2);
     assert.equal(summary.costPerLead, 25);
-    assert.equal(summary.costPerNewRecurringCustomer, null);
+    assert.equal(summary.costPerNewRecurringCustomer, 75);
+    assert.equal(summary.costPerNewRecurringCustomerStatus, "available");
+    assert.equal(summary.costPerNewRecurringCustomerNote, "Ad spend divided by new recurring customers");
+    assert.equal(summary.estimatedActiveMrr, 316);
+    assert.equal(summary.averageMonthlyTicket, 79);
     assert.equal(summary.estimatedMrrAdded, 60);
     assert.equal(summary.cancellations, 1);
     assert.equal(summary.netRecurringCustomerGrowth, 1);
@@ -235,7 +262,6 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
     assert.equal(summary.closeRateMetrics.websiteCloseRate, 30);
     assert.equal(summary.closeRateMetrics.totalCloseRate, 17.65);
-    assert(summary.dataNotes.some((note) => note.includes("Cost per new customer is unavailable")));
     assert(summary.dataNotes.some((note) => note.includes("manual review rows are not counted")));
     assert(!summary.dataNotes.some((note) => note.includes("Google Ads is not connected yet")));
     const leadQueries = pool.queries.filter((query) => query.sql.includes("FROM opportunities"));
@@ -259,9 +285,111 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalAdSpend, 0);
     assert.equal(summary.googleAdsStatus.connected, false);
     assert.equal(summary.totalLeads, 0);
+    assert.equal(summary.totalActiveClients, null);
+    assert.equal(summary.totalActiveClientsNeedsVerification, true);
     assert.equal(summary.costPerLead, null);
+    assert.equal(summary.costPerNewRecurringCustomer, 0);
+    assert.equal(summary.costPerNewRecurringCustomerStatus, "no_ad_spend");
+    assert.equal(summary.estimatedActiveMrr, null);
+    assert.equal(summary.averageMonthlyTicket, null);
     assert.equal(summary.closeRateMetrics.totalMatchedConversions, 0);
     assert(summary.dataNotes.some((note) => note.includes("No database")));
+  });
+
+  it("renders Total Active Clients and Average Monthly Ticket in the owner scoreboard", async () => {
+    const summary = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    assert(html.includes("Owner Scoreboard"));
+    assert(html.indexOf("Total Active Clients") < html.indexOf("Total Leads"));
+    assert(html.includes("Average Monthly Ticket"));
+    assert(html.includes("$79.00"));
+    assert(html.includes("As of latest Sweep&amp;Go sync"));
+  });
+
+  it("shows Average Monthly Ticket unavailable when active subscription amounts are incomplete", async () => {
+    class MissingPricePool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM customers c")) {
+          return {
+            rows: [{
+              active_clients: 4,
+              active_mrr: 158,
+              priced_active_clients: 2,
+              latest_sweepandgo_sync_started_at: "2026-06-22T11:00:00.000Z"
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+    const summary = await new PostgresDashboardDataSource(new MissingPricePool())
+      .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    assert.equal(summary.averageMonthlyTicket, null);
+    assert.equal(summary.estimatedActiveMrr, null);
+    assert.equal(summary.averageMonthlyTicketReason, "Active recurring monthly subscription amounts are not available yet.");
+    assert(html.includes("Average Monthly Ticket"));
+    assert(html.includes("Estimated MRR"));
+    assert(html.includes("Unavailable"));
+    assert(summary.dataNotes.some((note) => note.includes("Estimated MRR is unavailable until active recurring subscription amounts are captured")));
+  });
+
+  it("shows Facebook close rate as 0% when Facebook leads and conversions are both zero", async () => {
+    class NoFacebookLeadPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
+          return { rows: [{ facebook_leads: 0, website_leads: 10 }] };
+        }
+        return await super.query(sql, params);
+      }
+    }
+    const summary = await new PostgresDashboardDataSource(new NoFacebookLeadPool())
+      .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+
+    assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
+    assert(renderDashboard(dashboardData(summary)).includes("0%"));
+  });
+
+  it("uses safe cost per new customer display rules", async () => {
+    class CostPool extends FakePool {
+      private readonly input: { spend: number; customers: number };
+
+      constructor(input: { spend: number; customers: number }) {
+        super();
+        this.input = input;
+      }
+
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM daily_ad_performance")) {
+          return { rows: [{ meta_spend: this.input.spend, google_spend: 0 }] };
+        }
+        if (sql.includes("SUM(monthly_recurring_revenue)")) {
+          return { rows: [{ count: this.input.customers, mrr_added: 0, priced_count: 0 }] };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const noSpendNoCustomers = await new PostgresDashboardDataSource(new CostPool({ spend: 0, customers: 0 }))
+      .getSummary(parseDashboardDateRange({ range: "today" }));
+    assert.equal(noSpendNoCustomers.costPerNewRecurringCustomer, 0);
+    assert.equal(noSpendNoCustomers.costPerNewRecurringCustomerNote, "No ad spend");
+
+    const spendNoCustomers = await new PostgresDashboardDataSource(new CostPool({ spend: 100, customers: 0 }))
+      .getSummary(parseDashboardDateRange({ range: "today" }));
+    assert.equal(spendNoCustomers.costPerNewRecurringCustomer, null);
+    assert.equal(spendNoCustomers.costPerNewRecurringCustomerNote, "No new customers");
+
+    const spendAndCustomers = await new PostgresDashboardDataSource(new CostPool({ spend: 100, customers: 4 }))
+      .getSummary(parseDashboardDateRange({ range: "today" }));
+    assert.equal(spendAndCustomers.costPerNewRecurringCustomer, 25);
+    assert.equal(spendAndCustomers.costPerNewRecurringCustomerStatus, "available");
   });
 
   it("flags stale Sweep&Go sync runs in sync health", async () => {
@@ -301,7 +429,7 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(summary.googleSpend, 0);
     assert.equal(summary.googleAdsStatus.connected, true);
-    assert(html.includes("Google spend"));
+    assert(html.includes("Google Spend"));
     assert(html.includes("$0.00"));
     assert(!html.includes("Not connected yet"));
   });

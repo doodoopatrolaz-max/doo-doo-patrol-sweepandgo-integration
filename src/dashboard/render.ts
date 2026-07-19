@@ -46,6 +46,7 @@ export function renderDashboard(data: DashboardData): string {
         ${renderSummary(data.summary)}
         ${renderCharts(data.trends)}
         ${renderSources(data.sources)}
+        ${renderDataNotes(data.summary)}
         ${renderSyncHealth(data.syncHealth)}
       </main>
     `
@@ -78,41 +79,73 @@ function renderDateFilters(range: DashboardDateRange): string {
 }
 
 function renderSummary(summary: DashboardSummary): string {
-  const cards = [
-    ["Total ad spend", money(summary.totalAdSpend)],
-    ["Meta spend", money(summary.metaSpend)],
-    ["Google spend", summary.googleAdsStatus.connected ? money(summary.googleSpend) : "Not connected yet"],
-    ["Facebook leads", String(summary.facebookLeads)],
-    ["Website leads", String(summary.websiteLeads)],
-    ["Total leads", String(summary.totalLeads)],
-    ["New recurring customers", String(summary.newRecurringCustomers)],
-    ["Cost per lead", maybeMoney(summary.costPerLead)],
-    ["Cost per new customer", "Unavailable"],
-    ["Facebook close rate", maybePercent(summary.closeRateMetrics.facebookCloseRate)],
-    ["Website close rate", maybePercent(summary.closeRateMetrics.websiteCloseRate)],
-    ["Total close rate", maybePercent(summary.closeRateMetrics.totalCloseRate)],
-    ["Matched converted customers", String(summary.closeRateMetrics.totalMatchedConversions)],
-    ["Manual review conversions", String(summary.closeRateMetrics.manualReviewConversions)],
-    ["Estimated MRR added", summary.estimatedMrrAdded === null ? "Unavailable" : money(summary.estimatedMrrAdded)],
-    ["Cancellations", String(summary.cancellations)],
-    ["Net customer growth", signed(summary.netRecurringCustomerGrowth)]
+  const activeClientsNote = summary.totalActiveClientsAsOf
+    ? `As of latest Sweep&Go sync: ${summary.totalActiveClientsAsOf}`
+    : "Needs verification";
+  const primaryCards: DashboardCard[] = [
+    {
+      label: "Total Active Clients",
+      value: summary.totalActiveClients === null ? "Needs verification" : String(summary.totalActiveClients),
+      note: activeClientsNote
+    },
+    {
+      label: "Average Monthly Ticket",
+      value: summary.averageMonthlyTicket === null ? "Unavailable" : money(summary.averageMonthlyTicket),
+      note: summary.averageMonthlyTicketReason
+    },
+    { label: "Total Leads", value: String(summary.totalLeads) },
+    { label: "New Recurring Customers", value: String(summary.newRecurringCustomers) },
+    { label: "Close Rate", value: maybePercent(summary.closeRateMetrics.totalCloseRate) },
+    { label: "Net Customer Growth", value: signed(summary.netRecurringCustomerGrowth) }
+  ];
+  const secondaryCards: DashboardCard[] = [
+    { label: "Total Ad Spend", value: money(summary.totalAdSpend) },
+    { label: "Meta Spend", value: money(summary.metaSpend) },
+    {
+      label: "Google Spend",
+      value: summary.googleAdsStatus.connected ? money(summary.googleSpend) : "Not connected yet",
+      note: summary.googleAdsStatus.latestFailed ? "Latest sync failed; stored spend remains visible" : undefined
+    },
+    { label: "Cost Per Lead", value: maybeMoney(summary.costPerLead) },
+    {
+      label: "Cost Per New Customer",
+      value: maybeMoney(summary.costPerNewRecurringCustomer),
+      note: summary.costPerNewRecurringCustomerNote
+    },
+    { label: "Cancellations", value: String(summary.cancellations) },
+    {
+      label: "Estimated MRR",
+      value: summary.estimatedActiveMrr === null ? "Unavailable" : money(summary.estimatedActiveMrr),
+      note: summary.estimatedActiveMrrReason
+    }
   ];
 
   return `
     <section>
-      <h2>KPI Summary</h2>
-      <div class="cards">
-        ${cards.map(([label, value]) => `
-          <article class="card">
-            <span>${escapeHtml(label)}</span>
-            <strong>${escapeHtml(value)}</strong>
-          </article>
-        `).join("")}
+      <h2>Owner Scoreboard</h2>
+      <div class="cards owner-scoreboard primary">
+        ${primaryCards.map(renderCard).join("")}
       </div>
-      <div class="notes">
-        ${summary.dataNotes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}
+      <div class="cards owner-scoreboard secondary">
+        ${secondaryCards.map(renderCard).join("")}
       </div>
     </section>
+  `;
+}
+
+type DashboardCard = {
+  label: string;
+  value: string;
+  note?: string;
+};
+
+function renderCard(card: DashboardCard): string {
+  return `
+    <article class="card">
+      <span>${escapeHtml(card.label)}</span>
+      <strong>${escapeHtml(card.value)}</strong>
+      ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ""}
+    </article>
   `;
 }
 
@@ -188,6 +221,17 @@ function renderSources(sources: DashboardSources): string {
         <h2>Close Rate</h2>
         <p class="big-number">Stored Matches</p>
         <p class="muted">${escapeHtml(sources.matchingStatus)}</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderDataNotes(summary: DashboardSummary): string {
+  return `
+    <section>
+      <h2>Data Notes</h2>
+      <div class="notes">
+        ${summary.dataNotes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}
       </div>
     </section>
   `;
@@ -269,9 +313,12 @@ function pageShell(input: { title: string; body: string }): string {
     button { background:var(--blue); color:white; min-height:40px; }
     .range-label, .muted { color:#557083; margin:12px 0 0; }
     .cards { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
+    .owner-scoreboard.primary { grid-template-columns:repeat(6, minmax(0, 1fr)); }
+    .owner-scoreboard.secondary { grid-template-columns:repeat(7, minmax(0, 1fr)); margin-top:12px; }
     .card { background:white; border:1px solid var(--line); border-radius:8px; padding:16px; min-height:104px; box-shadow:0 8px 24px rgba(16,42,67,.06); }
     .card span { display:block; color:#557083; font-weight:700; min-height:38px; }
     .card strong { display:block; color:var(--navy); font-size:clamp(1.25rem, 3vw, 2rem); margin-top:8px; overflow-wrap:anywhere; }
+    .card small { display:block; margin-top:8px; color:#557083; font-weight:700; line-height:1.35; }
     .notes p { margin:4px 0; }
     .grid-two { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; }
@@ -292,7 +339,8 @@ function pageShell(input: { title: string; body: string }): string {
     .stale-sync td { background:#fffaf0; }
     .error { color:#b42318; font-weight:800; margin:0; }
     code { background:var(--soft); padding:2px 5px; border-radius:5px; }
-    @media (max-width: 850px) { .topbar { align-items:flex-start; flex-direction:column; } .cards, .grid-two { grid-template-columns:1fr; } .bar-row { grid-template-columns:48px 1fr 64px; } }
+    @media (max-width: 1100px) { .owner-scoreboard.primary, .owner-scoreboard.secondary { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 850px) { .topbar { align-items:flex-start; flex-direction:column; } .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary, .grid-two { grid-template-columns:1fr; } .bar-row { grid-template-columns:48px 1fr 64px; } }
   </style>
 </head>
 <body>${input.body}</body>

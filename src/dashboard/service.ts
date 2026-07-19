@@ -26,10 +26,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getSummary(range: DashboardDateRange): Promise<DashboardSummary> {
-    const [adSpend, leads, customers, cancellations, closeRateMetrics, googleAdsStatus] = await Promise.all([
+    const [adSpend, leads, customers, activeCustomers, cancellations, closeRateMetricsBase, googleAdsStatus] = await Promise.all([
       this.adSpendByPlatform(range),
       this.leadsBySource(range),
       this.newRecurringCustomers(range),
+      this.activeRecurringCustomers(),
       this.cancellations(range),
       this.closeRateMetrics(range),
       this.googleAdsStatus()
@@ -42,6 +43,20 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const newRecurringCustomers = customers.total;
     const totalAdSpend = adSpend.meta + adSpend.google;
     const estimatedMrrAdded = customers.mrrAdded === null ? null : roundMoney(customers.mrrAdded);
+    const costPerNewCustomer = costPerNewRecurringCustomer(totalAdSpend, newRecurringCustomers);
+    const activeMrrAvailable = activeCustomers.activeClients > 0
+      && activeCustomers.pricedActiveClients === activeCustomers.activeClients;
+    const estimatedActiveMrr = activeMrrAvailable ? roundMoney(activeCustomers.activeMrr) : null;
+    const averageMonthlyTicket = activeMrrAvailable
+      ? roundMoney(activeCustomers.activeMrr / activeCustomers.activeClients)
+      : null;
+    const activeMrrUnavailableReason = activeMrrAvailable
+      ? undefined
+      : "Active recurring monthly subscription amounts are not available yet.";
+    const closeRateMetrics = {
+      ...closeRateMetricsBase,
+      costPerNewCustomerStatus: costPerNewCustomer.status
+    };
 
     return {
       range,
@@ -53,9 +68,21 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       websiteLeads,
       otherLeads,
       totalLeads,
+      totalActiveClients: activeCustomers.asOf ? activeCustomers.activeClients : null,
+      totalActiveClientsSource: "Sweep&Go BI customers where status is active and at least one recurring service is present.",
+      totalActiveClientsAsOf: activeCustomers.asOf,
+      totalActiveClientsNeedsVerification: !activeCustomers.asOf,
       newRecurringCustomers,
       costPerLead: totalLeads > 0 ? roundMoney(totalAdSpend / totalLeads) : null,
-      costPerNewRecurringCustomer: null,
+      costPerNewRecurringCustomer: costPerNewCustomer.value,
+      costPerNewRecurringCustomerStatus: costPerNewCustomer.status,
+      costPerNewRecurringCustomerNote: costPerNewCustomer.note,
+      estimatedActiveMrr,
+      estimatedActiveMrrReason: activeMrrUnavailableReason
+        ? "Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source."
+        : undefined,
+      averageMonthlyTicket,
+      averageMonthlyTicketReason: activeMrrUnavailableReason,
       estimatedMrrAdded,
       cancellations,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations,
@@ -65,8 +92,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         googleAdsStatus,
         totalLeads,
         newRecurringCustomers,
-        estimatedMrrAdded,
+        estimatedActiveMrr,
+        averageMonthlyTicket,
         closeRateMetrics,
+        costPerNewRecurringCustomerStatus: costPerNewCustomer.status,
+        costPerNewRecurringCustomerNote: costPerNewCustomer.note,
         sweepAndGoLiveWebhookProcessingActive: true
       })
     };
@@ -343,6 +373,43 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     };
   }
 
+  private async activeRecurringCustomers(): Promise<{
+    activeClients: number;
+    activeMrr: number;
+    pricedActiveClients: number;
+    asOf?: string;
+  }> {
+    const result = await this.pool.query(
+      `SELECT COUNT(DISTINCT c.id)::int AS active_clients,
+              COALESCE(SUM(c.monthly_recurring_revenue), 0)::float AS active_mrr,
+              COUNT(DISTINCT c.id) FILTER (WHERE c.monthly_recurring_revenue IS NOT NULL)::int AS priced_active_clients,
+              (
+                SELECT started_at
+                FROM sync_runs
+                WHERE provider = 'sweepandgo'
+                  AND status = 'completed'
+                ORDER BY started_at DESC
+                LIMIT 1
+              ) AS latest_sweepandgo_sync_started_at
+       FROM customers c
+       WHERE c.status = 'active'
+         AND EXISTS (
+           SELECT 1
+           FROM customer_services cs
+           WHERE cs.customer_id = c.id
+             AND cs.cadence = 'recurring'
+             AND (cs.ended_on IS NULL OR cs.ended_on > CURRENT_DATE)
+         )`
+    );
+    const row = result.rows[0] ?? {};
+    return {
+      activeClients: integerValue(row.active_clients),
+      activeMrr: numberValue(row.active_mrr),
+      pricedActiveClients: integerValue(row.priced_active_clients),
+      asOf: isoString(row.latest_sweepandgo_sync_started_at)
+    };
+  }
+
   private async cancellations(range: DashboardDateRange): Promise<number> {
     const result = await this.pool.query(
       `SELECT COUNT(*)::int AS count
@@ -409,9 +476,18 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       websiteLeads: 0,
       otherLeads: 0,
       totalLeads: 0,
+      totalActiveClients: null,
+      totalActiveClientsSource: "No database connection is configured.",
+      totalActiveClientsNeedsVerification: true,
       newRecurringCustomers: 0,
       costPerLead: null,
-      costPerNewRecurringCustomer: null,
+      costPerNewRecurringCustomer: 0,
+      costPerNewRecurringCustomerStatus: "no_ad_spend",
+      costPerNewRecurringCustomerNote: "No ad spend",
+      estimatedActiveMrr: null,
+      estimatedActiveMrrReason: "Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source.",
+      averageMonthlyTicket: null,
+      averageMonthlyTicketReason: "Active recurring monthly subscription amounts are not available yet.",
       estimatedMrrAdded: null,
       cancellations: 0,
       netRecurringCustomerGrowth: 0,
@@ -492,8 +568,11 @@ function dataNotes(input: {
   googleAdsStatus: DashboardAdProviderStatus;
   totalLeads: number;
   newRecurringCustomers: number;
-  estimatedMrrAdded: number | null;
+  estimatedActiveMrr: number | null;
+  averageMonthlyTicket: number | null;
   closeRateMetrics: DashboardCloseRateMetrics;
+  costPerNewRecurringCustomerStatus: "available" | "no_ad_spend" | "no_new_customers";
+  costPerNewRecurringCustomerNote: string;
   sweepAndGoLiveWebhookProcessingActive?: boolean;
 }): string[] {
   const notes: string[] = [];
@@ -511,11 +590,14 @@ function dataNotes(input: {
   if (input.newRecurringCustomers === 0) {
     notes.push("No new recurring Sweep&Go customers found for this range.");
   }
-  if (input.estimatedMrrAdded === null) {
-    notes.push("MRR added is unavailable until recurring price fields are confirmed.");
+  if (input.estimatedActiveMrr === null) {
+    notes.push("Estimated MRR is unavailable until active recurring subscription amounts are captured from Sweep&Go subscriptions or another reliable recurring revenue source.");
   }
-  if (input.closeRateMetrics.costPerNewCustomerStatus === "unavailable_incomplete_spend_coverage") {
-    notes.push("Cost per new customer is unavailable until Meta and Google Ads spend coverage is complete for the selected date range.");
+  if (input.averageMonthlyTicket === null) {
+    notes.push("Average monthly ticket is unavailable until active recurring monthly subscription amounts are available for active clients.");
+  }
+  if (input.costPerNewRecurringCustomerStatus !== "available") {
+    notes.push(`Cost per new customer note: ${input.costPerNewRecurringCustomerNote}.`);
   }
   notes.push("Close rate uses stored stable GoHighLevel lead-to-customer matches only; manual review rows are not counted as conversions.");
   return notes;
@@ -538,7 +620,7 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     facebookCloseRate: null,
     websiteCloseRate: null,
     totalCloseRate: null,
-    costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
+    costPerNewCustomerStatus: "no_ad_spend"
   };
 }
 
@@ -553,6 +635,9 @@ function numberValue(value: unknown): number {
 }
 
 function percentage(part: number, total: number): number | null {
+  if (total === 0 && part === 0) {
+    return 0;
+  }
   return total > 0 ? Math.round((part / total) * 10000) / 100 : null;
 }
 
@@ -598,4 +683,29 @@ function dateValue(value: unknown): Date | undefined {
 
 function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function costPerNewRecurringCustomer(
+  totalAdSpend: number,
+  newRecurringCustomers: number
+): { value: number | null; status: "available" | "no_ad_spend" | "no_new_customers"; note: string } {
+  if (totalAdSpend === 0) {
+    return {
+      value: 0,
+      status: "no_ad_spend",
+      note: "No ad spend"
+    };
+  }
+  if (newRecurringCustomers === 0) {
+    return {
+      value: null,
+      status: "no_new_customers",
+      note: "No new customers"
+    };
+  }
+  return {
+    value: roundMoney(totalAdSpend / newRecurringCustomers),
+    status: "available",
+    note: "Ad spend divided by new recurring customers"
+  };
 }

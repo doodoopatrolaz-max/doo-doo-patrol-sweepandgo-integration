@@ -10,9 +10,19 @@ export type DashboardSummary = {
   websiteLeads: number;
   otherLeads: number;
   totalLeads: number;
+  totalActiveClients: number | null;
+  totalActiveClientsSource: string;
+  totalActiveClientsAsOf?: string;
+  totalActiveClientsNeedsVerification: boolean;
   newRecurringCustomers: number;
   costPerLead: number | null;
   costPerNewRecurringCustomer: number | null;
+  costPerNewRecurringCustomerStatus: DashboardCostPerNewCustomerStatus;
+  costPerNewRecurringCustomerNote: string;
+  estimatedActiveMrr: number | null;
+  estimatedActiveMrrReason?: string;
+  averageMonthlyTicket: number | null;
+  averageMonthlyTicketReason?: string;
   estimatedMrrAdded: number | null;
   cancellations: number;
   netRecurringCustomerGrowth: number;
@@ -37,8 +47,10 @@ export type DashboardCloseRateMetrics = {
   facebookCloseRate: number | null;
   websiteCloseRate: number | null;
   totalCloseRate: number | null;
-  costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage";
+  costPerNewCustomerStatus: DashboardCostPerNewCustomerStatus;
 };
+
+export type DashboardCostPerNewCustomerStatus = "available" | "no_ad_spend" | "no_new_customers";
 
 export type DashboardTrendPoint = {
   date: string;

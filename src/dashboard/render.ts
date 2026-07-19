@@ -104,7 +104,12 @@ function renderSummary(summary: DashboardSummary): string {
     {
       label: "New Recurring Customers",
       value: String(summary.newRecurringCustomers),
-      breakdown: sourceBreakdownRows(summary.newRecurringCustomerBreakdown)
+      breakdown: [
+        ...sourceBreakdownRows(summary.newRecurringCustomerBreakdown),
+        ...(summary.priorPeriodLeadConversions > 0
+          ? [{ label: "Prior-period leads", value: String(summary.priorPeriodLeadConversions) }]
+          : [])
+      ]
     },
     {
       label: "Close Rate",
@@ -136,9 +141,14 @@ function renderSummary(summary: DashboardSummary): string {
       note: summary.lifetimeValueReason
     },
     {
-      label: "Average Revenue Per Hour",
+      label: "Avg Revenue / Service Hour",
       value: maybeMoney(summary.averageRevenuePerHour),
-      note: summary.averageRevenuePerHourReason
+      note: summary.averageRevenuePerHourReason,
+      breakdown: [
+        { label: "Stops", value: String(summary.revenuePerHourMetrics.completedStops) },
+        { label: "Service Hrs", value: String(summary.revenuePerHourMetrics.serviceHours) },
+        { label: "Revenue", value: money(summary.revenuePerHourMetrics.serviceRevenue) }
+      ]
     },
     { label: "Net Customer Growth", value: signed(summary.netRecurringCustomerGrowth) },
     { label: "Total Ad Spend", value: money(summary.totalAdSpend) }

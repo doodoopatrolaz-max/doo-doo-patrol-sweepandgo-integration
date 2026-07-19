@@ -36,6 +36,7 @@ export type DashboardSummary = {
   averageRevenuePerHour: number | null;
   averageRevenuePerHourReason?: string;
   revenuePerHourMetrics: DashboardRevenuePerHourMetrics;
+  priorPeriodLeadConversions: number;
   netRecurringCustomerGrowth: number;
   closeRate: number | null;
   closeRateMetrics: DashboardCloseRateMetrics;
@@ -72,6 +73,9 @@ export type DashboardCloseRateMetrics = {
   websiteMatchedConversions: number;
   totalMatchedConversions: number;
   manualReviewConversions: number;
+  facebookPriorPeriodLeadConversions: number;
+  websitePriorPeriodLeadConversions: number;
+  totalPriorPeriodLeadConversions: number;
   facebookCloseRate: number | null;
   websiteCloseRate: number | null;
   totalCloseRate: number | null;
@@ -79,11 +83,20 @@ export type DashboardCloseRateMetrics = {
 };
 
 export type DashboardRevenuePerHourMetrics = {
-  revenueCollected: number;
-  laborHours: number;
-  paymentEvents: number;
-  payrollShiftEvents: number;
+  serviceRevenue: number;
+  serviceHours: number;
+  completedJobs: number;
+  completedStops: number;
+  pricedCompletedJobs: number;
+  timedCompletedJobs: number;
+  zeroDurationRevenueJobs: number;
+  scoopingRevenue: number;
+  sprayRevenue: number;
+  initialCleanupRevenue: number;
+  revenuePerStop: number | null;
+  averageMinutesPerStop: number | null;
   status: "available" | "unavailable";
+  unavailableReason?: string;
 };
 
 export type DashboardCostPerNewCustomerStatus = "available" | "no_ad_spend" | "no_new_customers" | "unavailable_incomplete_spend_coverage";

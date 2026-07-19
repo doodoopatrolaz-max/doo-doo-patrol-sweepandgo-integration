@@ -7,6 +7,7 @@ import type { AppConfig } from "../src/config.ts";
 import { parseDashboardDateRange } from "../src/dashboard/dateRange.ts";
 import { renderDashboard } from "../src/dashboard/render.ts";
 import { EmptyDashboardDataSource, PostgresDashboardDataSource } from "../src/dashboard/service.ts";
+import { calculateCompletedJobRevenueMetrics } from "../src/dashboard/serviceRevenue.ts";
 import type { DashboardData, DashboardDataSource, DashboardSummary } from "../src/dashboard/types.ts";
 import { createRequestHandler } from "../src/http/app.ts";
 import { InMemoryWebhookEventStore } from "../src/webhooks/inMemoryStore.ts";
@@ -79,11 +80,14 @@ class FakePool {
         }]
       };
     }
-    if (sql.includes("client_payment_accepted")) {
-      return { rows: [{ payment_events: 4, revenue_collected: 570 }] };
-    }
-    if (sql.includes("payroll:shift_info")) {
-      return { rows: [{ payroll_shift_events: 3, labor_hours: 6 }] };
+    if (sql.includes("event_type = 'job:completed'")) {
+      return {
+        rows: [
+          { receivedAt: "2026-06-01T12:00:00.000Z", payload: { data: { date: "2026-06-01", status_name: "completed", type: "recurring", assigned_to_id: 1, client_id: "yard-1", price: "60.00", duration: "00:30" } } },
+          { receivedAt: "2026-06-01T12:05:00.000Z", payload: { data: { date: "2026-06-01", status_name: "completed", type: "recurring", assigned_to_id: 1, client_id: "yard-1", pricing_plan_name: "Fresh Poo", price: "20.00", duration: "00:00" } } },
+          { receivedAt: "2026-06-01T12:10:00.000Z", payload: { data: { date: "2026-06-01", status_name: "skipped", type: "recurring", assigned_to_id: 1, client_id: "yard-2", price: "50.00", duration: "00:10" } } }
+        ]
+      };
     }
     return { rows: [] };
   }
@@ -229,14 +233,24 @@ const summaryOnlyDataSource: DashboardDataSource = {
       lifetimeValue: null,
       lifetimeValueReason: "Lifetime value unavailable when churn is zero or unavailable.",
       averageRevenuePerHour: null,
-      averageRevenuePerHourReason: "Average Revenue Per Hour unavailable until stored accepted-payment events and payroll shift hours both cover the selected range.",
+      averageRevenuePerHourReason: "No stored Sweep&Go completed job rows were available for the selected range.",
       revenuePerHourMetrics: {
-        revenueCollected: 0,
-        laborHours: 0,
-        paymentEvents: 0,
-        payrollShiftEvents: 0,
-        status: "unavailable"
+        serviceRevenue: 0,
+        serviceHours: 0,
+        completedJobs: 0,
+        completedStops: 0,
+        pricedCompletedJobs: 0,
+        timedCompletedJobs: 0,
+        zeroDurationRevenueJobs: 0,
+        scoopingRevenue: 0,
+        sprayRevenue: 0,
+        initialCleanupRevenue: 0,
+        revenuePerStop: null,
+        averageMinutesPerStop: null,
+        status: "unavailable",
+        unavailableReason: "No stored Sweep&Go completed job rows were available for the selected range."
       },
+      priorPeriodLeadConversions: 0,
       netRecurringCustomerGrowth: 0,
       closeRate: null,
       closeRateMetrics: {
@@ -244,6 +258,9 @@ const summaryOnlyDataSource: DashboardDataSource = {
         websiteMatchedConversions: 0,
         totalMatchedConversions: 0,
         manualReviewConversions: 0,
+        facebookPriorPeriodLeadConversions: 0,
+        websitePriorPeriodLeadConversions: 0,
+        totalPriorPeriodLeadConversions: 0,
         facebookCloseRate: null,
         websiteCloseRate: null,
         totalCloseRate: null,
@@ -339,9 +356,13 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.churnRate, 5);
     assert.equal(summary.churnRateDenominator, 20);
     assert.equal(summary.lifetimeValue, 1900);
-    assert.equal(summary.averageRevenuePerHour, 95);
-    assert.equal(summary.revenuePerHourMetrics.paymentEvents, 4);
-    assert.equal(summary.revenuePerHourMetrics.payrollShiftEvents, 3);
+    assert.equal(summary.averageRevenuePerHour, 160);
+    assert.equal(summary.averageRevenuePerHourReason, "Sweep&Go completed job revenue divided by recorded service time. This does not include drive time or breaks.");
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
+    assert.equal(summary.revenuePerHourMetrics.serviceHours, 0.5);
+    assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
+    assert.equal(summary.revenuePerHourMetrics.sprayRevenue, 20);
+    assert.equal(summary.revenuePerHourMetrics.zeroDurationRevenueJobs, 1);
     assert.equal(summary.netRecurringCustomerGrowth, 1);
     assert.equal(summary.closeRateMetrics.facebookMatchedConversions, 0);
     assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 3);
@@ -397,8 +418,8 @@ describe("dashboard KPI aggregation", () => {
     assert(html.indexOf("Close Rate") < html.indexOf("Churn Rate"));
     assert(html.indexOf("Churn Rate") < html.indexOf("Average Monthly Ticket"));
     assert(html.indexOf("Average Monthly Ticket") < html.indexOf("Lifetime Value"));
-    assert(html.indexOf("Lifetime Value") < html.indexOf("Average Revenue Per Hour"));
-    assert(html.indexOf("Average Revenue Per Hour") < html.indexOf("Net Customer Growth"));
+    assert(html.indexOf("Lifetime Value") < html.indexOf("Avg Revenue / Service Hour"));
+    assert(html.indexOf("Avg Revenue / Service Hour") < html.indexOf("Net Customer Growth"));
     assert(html.indexOf("Net Customer Growth") < html.indexOf("Total Ad Spend"));
     assert(html.indexOf("Total Ad Spend") < html.indexOf("Meta Spend"));
     assert(!html.includes("<span>Estimated MRR</span>"));
@@ -470,11 +491,8 @@ describe("dashboard KPI aggregation", () => {
             }]
           };
         }
-        if (sql.includes("client_payment_accepted")) {
-          return { rows: [{ payment_events: 0, revenue_collected: 0 }] };
-        }
-        if (sql.includes("payroll:shift_info")) {
-          return { rows: [{ payroll_shift_events: 0, labor_hours: 0 }] };
+        if (sql.includes("event_type = 'job:completed'")) {
+          return { rows: [] };
         }
         return await super.query(sql, params);
       }
@@ -490,7 +508,7 @@ describe("dashboard KPI aggregation", () => {
     assert(!html.includes("<span>Estimated MRR</span>"));
     assert(!html.includes("<strong>Unavailable</strong>"));
     assert(summary.dataNotes.some((note) => note.includes("Average Monthly Ticket is currently configured")));
-    assert(summary.dataNotes.some((note) => note.includes("Average Revenue Per Hour is unavailable")));
+    assert(summary.dataNotes.some((note) => note.includes("No stored Sweep&Go completed job rows")));
     assert(!html.includes("Estimated MRR is hidden for now"));
   });
 
@@ -509,6 +527,79 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
     assert(renderDashboard(dashboardData(summary)).includes("0%"));
+  });
+
+  it("keeps prior-period lead conversions out of selected-period lead counts and same-period close rate", async () => {
+    class PriorPeriodConversionPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
+          return { rows: [{ facebook_leads: 0, website_leads: 14 }] };
+        }
+        if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
+          return { rows: [{ source: "website", count: 14 }] };
+        }
+        if (sql.includes("FROM lead_customer_matches")) {
+          return {
+            rows: [{
+              facebook_matched: 0,
+              website_matched: 0,
+              total_matched: 0,
+              manual_review: 0,
+              facebook_prior_period: 0,
+              website_prior_period: 1,
+              total_prior_period: 1
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+    const summary = await new PostgresDashboardDataSource(new PriorPeriodConversionPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    assert.equal(summary.websiteLeads, 14);
+    assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 0);
+    assert.equal(summary.closeRateMetrics.websitePriorPeriodLeadConversions, 1);
+    assert.equal(summary.priorPeriodLeadConversions, 1);
+    assert.equal(summary.closeRateMetrics.websiteCloseRate, 0);
+    assert(summary.dataNotes.some((note) => note.includes("leads created before the selected period")));
+    assert(html.includes("Prior-period leads"));
+  });
+
+  it("calculates average revenue per service hour from completed Sweep&Go job rows", () => {
+    const metrics = calculateCompletedJobRevenueMetrics([
+      completedJobRow({ client_id: "same-yard", price: "60.00", duration: "00:30", type: "recurring" }),
+      completedJobRow({ client_id: "same-yard", price: "20.00", duration: "00:00", pricing_plan_name: "Fresh Poo" }),
+      completedJobRow({ client_id: "skipped-yard", price: "50.00", duration: "00:10", status_name: "skipped" }),
+      completedJobRow({ client_id: "missed-yard", price: "50.00", duration: "00:10", status_name: "missed" }),
+      completedJobRow({ client_id: "free-initial", price: "0.00", duration: "01:00", type: "initial" })
+    ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(metrics.status, "available");
+    assert.equal(metrics.serviceRevenue, 80);
+    assert.equal(metrics.serviceHours, 0.5);
+    assert.equal(metrics.completedStops, 1);
+    assert.equal(metrics.completedJobs, 3);
+    assert.equal(metrics.pricedCompletedJobs, 2);
+    assert.equal(metrics.timedCompletedJobs, 1);
+    assert.equal(metrics.zeroDurationRevenueJobs, 1);
+    assert.equal(metrics.scoopingRevenue, 60);
+    assert.equal(metrics.sprayRevenue, 20);
+    assert.equal(metrics.revenuePerStop, 80);
+    assert.equal(metrics.averageMinutesPerStop, 30);
+  });
+
+  it("keeps service-hour revenue unavailable when completed jobs have no usable service time", () => {
+    const metrics = calculateCompletedJobRevenueMetrics([
+      completedJobRow({ client_id: "same-yard", price: "20.00", duration: "00:00", pricing_plan_name: "Fresh Poo" })
+    ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(metrics.status, "unavailable");
+    assert.equal(metrics.serviceRevenue, 20);
+    assert.equal(metrics.serviceHours, 0);
+    assert.equal(metrics.unavailableReason, "Stored completed job rows did not include usable positive service duration.");
   });
 
   it("uses safe cost per new customer display rules", async () => {
@@ -745,6 +836,20 @@ function dashboardData(summary: DashboardSummary): DashboardData {
       matchingStatus: "Stable matches only."
     },
     syncHealth: { rows: [] }
+  };
+}
+
+function completedJobRow(data: Record<string, unknown>) {
+  return {
+    receivedAt: "2026-07-01T12:00:00.000Z",
+    payload: {
+      data: {
+        date: "2026-07-01",
+        status_name: "completed",
+        assigned_to_id: 1,
+        ...data
+      }
+    }
   };
 }
 

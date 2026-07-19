@@ -1,4 +1,5 @@
 import { enumerateDates, type DashboardDateRange } from "./dateRange.ts";
+import { calculateCompletedJobRevenueMetrics } from "./serviceRevenue.ts";
 import type {
   DashboardCampaignRow,
   DashboardAdProviderStatus,
@@ -87,8 +88,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const lifetimeValue = churnRateDecimal && churnRateDecimal > 0
       ? roundMoney(TEMP_AVERAGE_MONTHLY_TICKET / churnRateDecimal)
       : null;
-    const averageRevenuePerHour = revenuePerHourMetrics.status === "available" && revenuePerHourMetrics.laborHours > 0
-      ? roundMoney(revenuePerHourMetrics.revenueCollected / revenuePerHourMetrics.laborHours)
+    const averageRevenuePerHour = revenuePerHourMetrics.status === "available" && revenuePerHourMetrics.serviceHours > 0
+      ? roundMoney(revenuePerHourMetrics.serviceRevenue / revenuePerHourMetrics.serviceHours)
       : null;
     const closeRateMetrics = {
       ...closeRateMetricsBase,
@@ -134,9 +135,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         : "Average Monthly Ticket divided by Monthly Churn Rate.",
       averageRevenuePerHour,
       averageRevenuePerHourReason: averageRevenuePerHour === null
-        ? "Average Revenue Per Hour unavailable until stored accepted-payment events and payroll shift hours both cover the selected range."
-        : "Accepted payment revenue divided by payroll shift labor hours from stored Sweep&Go webhook data.",
+        ? (revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.")
+        : "Sweep&Go completed job revenue divided by recorded service time. This does not include drive time or breaks.",
       revenuePerHourMetrics,
+      priorPeriodLeadConversions: closeRateMetrics.totalPriorPeriodLeadConversions,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
       closeRate: closeRateMetrics.totalCloseRate,
       closeRateMetrics,
@@ -601,97 +603,20 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async revenuePerHourMetrics(range: DashboardDateRange): Promise<DashboardRevenuePerHourMetrics> {
-    const [revenueResult, laborResult] = await Promise.all([
-      this.pool.query(
-        `WITH payment_events AS (
-           SELECT DISTINCT ON (event_fingerprint)
-                  received_at,
-                  payload
-           FROM webhook_events
-           WHERE event_type IN ('client:client_payment_accepted', 'commercial:client_payment_accepted')
-             AND processing_status <> 'failed'
-           ORDER BY event_fingerprint, received_at DESC
-         ),
-         parsed_payments AS (
-           SELECT received_at::date AS payment_date,
-                  NULLIF(regexp_replace(
-                    COALESCE(
-                      payload->'data'->>'amount',
-                      payload->'data'->>'paid',
-                      payload->'data'->>'total',
-                      payload->>'amount',
-                      payload->>'paid',
-                      payload->>'total',
-                      ''
-                    ),
-                    '[^0-9.-]',
-                    '',
-                    'g'
-                  ), '') AS amount_text
-           FROM payment_events
-         )
-         SELECT COUNT(*) FILTER (WHERE amount_text ~ '^-?[0-9]+(\\.[0-9]+)?$')::int AS payment_events,
-                COALESCE(SUM(
-                  CASE
-                    WHEN amount_text ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN amount_text::numeric
-                    ELSE 0
-                  END
-                ), 0)::float AS revenue_collected
-         FROM parsed_payments
-         WHERE payment_date BETWEEN $1::date AND $2::date`,
-        [range.startDate, range.endDate]
-      ),
-      this.pool.query(
-        `WITH shift_events AS (
-           SELECT DISTINCT ON (event_fingerprint)
-                  received_at,
-                  payload
-           FROM webhook_events
-           WHERE event_type = 'payroll:shift_info'
-             AND processing_status <> 'failed'
-           ORDER BY event_fingerprint, received_at DESC
-         ),
-         parsed_shifts AS (
-           SELECT
-             CASE
-               WHEN COALESCE(payload->'data'->>'shift_date', payload->>'shift_date', '') ~ '^\\d{4}-\\d{2}-\\d{2}$'
-                 THEN COALESCE(payload->'data'->>'shift_date', payload->>'shift_date')::date
-               ELSE received_at::date
-             END AS shift_date,
-             NULLIF(regexp_replace(
-               COALESCE(payload->'data'->>'duration_time', payload->>'duration_time', ''),
-               '[^0-9.-]',
-               '',
-               'g'
-             ), '') AS duration_minutes_text
-           FROM shift_events
-         )
-         SELECT COUNT(*) FILTER (WHERE duration_minutes_text ~ '^[0-9]+(\\.[0-9]+)?$')::int AS payroll_shift_events,
-                COALESCE(SUM(
-                  CASE
-                    WHEN duration_minutes_text ~ '^[0-9]+(\\.[0-9]+)?$' THEN duration_minutes_text::numeric / 60
-                    ELSE 0
-                  END
-                ), 0)::float AS labor_hours
-         FROM parsed_shifts
-         WHERE shift_date BETWEEN $1::date AND $2::date`,
-        [range.startDate, range.endDate]
-      )
-    ]);
-    const revenueRow = revenueResult.rows[0] ?? {};
-    const laborRow = laborResult.rows[0] ?? {};
-    const revenueCollected = roundMoney(numberValue(revenueRow.revenue_collected));
-    const laborHours = roundMoney(numberValue(laborRow.labor_hours));
-    const paymentEvents = integerValue(revenueRow.payment_events);
-    const payrollShiftEvents = integerValue(laborRow.payroll_shift_events);
+    const result = await this.pool.query(
+      `SELECT payload,
+              received_at AS "receivedAt"
+       FROM webhook_events
+       WHERE event_type = 'job:completed'
+         AND processing_status <> 'failed'
+       ORDER BY received_at`,
+      []
+    );
 
-    return {
-      revenueCollected,
-      laborHours,
-      paymentEvents,
-      payrollShiftEvents,
-      status: revenueCollected > 0 && laborHours > 0 ? "available" : "unavailable"
-    };
+    return calculateCompletedJobRevenueMetrics(result.rows.map((row) => ({
+      payload: row.payload,
+      receivedAt: row.receivedAt
+    })), range);
   }
 
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
@@ -708,12 +633,16 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       ),
       this.pool.query(
         `SELECT
-           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'facebook')::int AS facebook_matched,
-           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'website')::int AS website_matched,
-           COUNT(*) FILTER (WHERE status = 'matched')::int AS total_matched,
-           COUNT(*) FILTER (WHERE status = 'review')::int AS manual_review
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'facebook' AND lead_date BETWEEN $1::date AND $2::date)::int AS facebook_matched,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'website' AND lead_date BETWEEN $1::date AND $2::date)::int AS website_matched,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_date BETWEEN $1::date AND $2::date)::int AS total_matched,
+           COUNT(*) FILTER (WHERE status = 'review' AND conversion_date BETWEEN $1::date AND $2::date)::int AS manual_review,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'facebook' AND lead_date < $1::date AND conversion_date BETWEEN $1::date AND $2::date)::int AS facebook_prior_period,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_source = 'website' AND lead_date < $1::date AND conversion_date BETWEEN $1::date AND $2::date)::int AS website_prior_period,
+           COUNT(*) FILTER (WHERE status = 'matched' AND lead_date < $1::date AND conversion_date BETWEEN $1::date AND $2::date)::int AS total_prior_period
          FROM lead_customer_matches
-         WHERE lead_date BETWEEN $1::date AND $2::date`,
+         WHERE lead_date BETWEEN $1::date AND $2::date
+            OR conversion_date BETWEEN $1::date AND $2::date`,
         [range.startDate, range.endDate]
       )
     ]);
@@ -730,6 +659,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       websiteMatchedConversions,
       totalMatchedConversions,
       manualReviewConversions: integerValue(matchRow.manual_review),
+      facebookPriorPeriodLeadConversions: integerValue(matchRow.facebook_prior_period),
+      websitePriorPeriodLeadConversions: integerValue(matchRow.website_prior_period),
+      totalPriorPeriodLeadConversions: integerValue(matchRow.total_prior_period),
       facebookCloseRate: percentage(facebookMatchedConversions, facebookLeads),
       websiteCloseRate: percentage(websiteMatchedConversions, websiteLeads),
       totalCloseRate: percentage(totalMatchedConversions, facebookLeads + websiteLeads),
@@ -773,14 +705,24 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       lifetimeValue: null,
       lifetimeValueReason: "Lifetime value unavailable when churn is zero or unavailable.",
       averageRevenuePerHour: null,
-      averageRevenuePerHourReason: "Average Revenue Per Hour unavailable because no database connection is configured.",
+      averageRevenuePerHourReason: "Average Revenue Per Service Hour unavailable because no database connection is configured.",
       revenuePerHourMetrics: {
-        revenueCollected: 0,
-        laborHours: 0,
-        paymentEvents: 0,
-        payrollShiftEvents: 0,
-        status: "unavailable"
+        serviceRevenue: 0,
+        serviceHours: 0,
+        completedJobs: 0,
+        completedStops: 0,
+        pricedCompletedJobs: 0,
+        timedCompletedJobs: 0,
+        zeroDurationRevenueJobs: 0,
+        scoopingRevenue: 0,
+        sprayRevenue: 0,
+        initialCleanupRevenue: 0,
+        revenuePerStop: null,
+        averageMinutesPerStop: null,
+        status: "unavailable",
+        unavailableReason: "No database connection is configured."
       },
+      priorPeriodLeadConversions: 0,
       netRecurringCustomerGrowth: 0,
       closeRate: null,
       closeRateMetrics: emptyCloseRateMetrics(),
@@ -898,7 +840,12 @@ function dataNotes(input: {
     notes.push("Lifetime Value uses Average Monthly Ticket divided by Monthly Churn Rate; it is unavailable when churn is zero or unavailable.");
   }
   if (input.revenuePerHourMetrics.status !== "available") {
-    notes.push("Average Revenue Per Hour is unavailable until accepted payment events and payroll shift hours both exist for the selected range.");
+    notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour is unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.");
+  } else {
+    notes.push("Average Revenue Per Hour uses Sweep&Go completed job revenue divided by recorded service time. It does not include drive time or breaks.");
+  }
+  if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {
+    notes.push(`${input.closeRateMetrics.totalPriorPeriodLeadConversions} conversion(s) in this range came from leads created before the selected period; they do not increase the selected-period lead count.`);
   }
   if (input.costPerNewRecurringCustomerStatus !== "available") {
     notes.push(`Cost per new customer note: ${input.costPerNewRecurringCustomerNote}.`);
@@ -921,6 +868,9 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     websiteMatchedConversions: 0,
     totalMatchedConversions: 0,
     manualReviewConversions: 0,
+    facebookPriorPeriodLeadConversions: 0,
+    websitePriorPeriodLeadConversions: 0,
+    totalPriorPeriodLeadConversions: 0,
     facebookCloseRate: null,
     websiteCloseRate: null,
     totalCloseRate: null,

@@ -36,6 +36,9 @@ export type DashboardSummary = {
   averageRevenuePerHour: number | null;
   averageRevenuePerHourReason?: string;
   revenuePerHourMetrics: DashboardRevenuePerHourMetrics;
+  averageRevenuePerShiftHour: number | null;
+  averageRevenuePerShiftHourReason?: string;
+  revenuePerShiftHourMetrics: DashboardRevenuePerShiftHourMetrics;
   priorPeriodLeadConversions: number;
   netRecurringCustomerGrowth: number;
   closeRate: number | null;
@@ -84,6 +87,15 @@ export type DashboardCloseRateMetrics = {
 };
 
 export type DashboardRevenuePerHourMetrics = {
+  rawCompletedJobRows: number;
+  eligibleRows: number;
+  excludedRows: number;
+  sameStopGroupsCreated: number;
+  scoopSprayCombinedStopGroups: number;
+  zeroDurationRows: number;
+  zeroDurationRowsAttachedToValidStop: number;
+  zeroDurationRowsExcluded: number;
+  missingPriceRows: number;
   serviceRevenue: number;
   serviceHours: number;
   completedJobs: number;
@@ -96,6 +108,16 @@ export type DashboardRevenuePerHourMetrics = {
   initialCleanupRevenue: number;
   revenuePerStop: number | null;
   averageMinutesPerStop: number | null;
+  status: "available" | "unavailable";
+  unavailableReason?: string;
+};
+
+export type DashboardRevenuePerShiftHourMetrics = {
+  serviceRevenue: number;
+  shiftHours: number;
+  rawShiftRows: number;
+  dedupedShiftRows: number;
+  revenuePerShiftHour: number | null;
   status: "available" | "unavailable";
   unavailableReason?: string;
 };

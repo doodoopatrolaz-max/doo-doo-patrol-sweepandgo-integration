@@ -219,6 +219,22 @@ class CompletedJobsFactPool extends FakePool {
   }
 }
 
+class CompletedJobsWithShiftPool extends CompletedJobsFactPool {
+  override async query(sql: string, params: unknown[] = []) {
+    this.queries.push({ sql, params });
+    if (sql.includes("event_type IN ('payroll:shift_info'")) {
+      return {
+        rows: [
+          payrollShiftRow({ employee_id: "tech-1", shift_id: "shift-1", shift_date: "2026-07-01", duration_time: 120 }, "2026-07-01T18:00:00.000Z"),
+          payrollShiftRow({ employee_id: "tech-1", shift_id: "shift-1", shift_date: "2026-07-01", duration_time: 120 }, "2026-07-01T18:01:00.000Z"),
+          payrollShiftRow({ employee_id: "tech-2", shift_id: "shift-2", shift_date: "2026-07-01", duration_time: 60 }, "2026-07-01T18:02:00.000Z")
+        ]
+      };
+    }
+    return await super.query(sql, params);
+  }
+}
+
 class SyncHealthPool {
   async query(sql: string) {
     if (sql.includes("FROM sync_runs")) {
@@ -294,6 +310,15 @@ const summaryOnlyDataSource: DashboardDataSource = {
       averageRevenuePerHour: null,
       averageRevenuePerHourReason: "No stored Sweep&Go completed job rows were available for the selected range.",
       revenuePerHourMetrics: {
+        rawCompletedJobRows: 0,
+        eligibleRows: 0,
+        excludedRows: 0,
+        sameStopGroupsCreated: 0,
+        scoopSprayCombinedStopGroups: 0,
+        zeroDurationRows: 0,
+        zeroDurationRowsAttachedToValidStop: 0,
+        zeroDurationRowsExcluded: 0,
+        missingPriceRows: 0,
         serviceRevenue: 0,
         serviceHours: 0,
         completedJobs: 0,
@@ -308,6 +333,17 @@ const summaryOnlyDataSource: DashboardDataSource = {
         averageMinutesPerStop: null,
         status: "unavailable",
         unavailableReason: "No stored Sweep&Go completed job rows were available for the selected range."
+      },
+      averageRevenuePerShiftHour: null,
+      averageRevenuePerShiftHourReason: "No stored Sweep&Go payroll shift rows were available for the selected range.",
+      revenuePerShiftHourMetrics: {
+        serviceRevenue: 0,
+        shiftHours: 0,
+        rawShiftRows: 0,
+        dedupedShiftRows: 0,
+        revenuePerShiftHour: null,
+        status: "unavailable",
+        unavailableReason: "No stored Sweep&Go payroll shift rows were available for the selected range."
       },
       priorPeriodLeadConversions: 0,
       netRecurringCustomerGrowth: 0,
@@ -599,6 +635,22 @@ describe("dashboard KPI aggregation", () => {
         if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
           return { rows: [{ source: "website", count: 14 }] };
         }
+        if (sql.includes("SUM(monthly_recurring_revenue)")) {
+          return { rows: [{ source: "website", count: 5, mrr_added: 0, priced_count: 0 }] };
+        }
+        if (sql.includes("FROM cancellations")) {
+          return {
+            rows: [{
+              counted_cancellations: 3,
+              raw_cancellation_rows: 3,
+              unique_cancellation_candidates: 3,
+              duplicate_rows_excluded: 0,
+              subscription_only_active_excluded: 0,
+              pause_rows_excluded: 0,
+              needs_review: 0
+            }]
+          };
+        }
         if (sql.includes("facebook_customers")) {
           return { rows: [{ facebook_customers: 0, website_customers: 5, other_unknown_customers: 0 }] };
         }
@@ -624,15 +676,21 @@ describe("dashboard KPI aggregation", () => {
     const html = renderDashboard(dashboardData(summary));
 
     assert.equal(summary.websiteLeads, 14);
+    assert.equal(summary.newRecurringCustomers, 6);
+    assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 5, other: 0, unknown: 0 });
     assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 5);
     assert.equal(summary.closeRateMetrics.websitePriorPeriodLeadConversions, 1);
     assert.equal(summary.priorPeriodLeadConversions, 1);
+    assert.equal(summary.cancellations, 3);
+    assert.equal(summary.netRecurringCustomerGrowth, 3);
     assert.equal(summary.closeRateMetrics.websiteCloseRate, 35.71);
     assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
     assert.equal(summary.closeRateMetrics.totalCloseRate, 35.71);
     assert(summary.dataNotes.some((note) => note.includes("leads created before the selected period")));
     assert(summary.dataNotes.some((note) => note.includes("new recurring customers in the selected period divided by leads created in the selected period")));
-    assert(html.includes("Prior-period leads"));
+    assert(html.includes("New Recurring Customers"));
+    assert(html.includes("Other/Unknown"));
+    assert(html.includes("Prior-period lead"));
     assert(html.includes("Includes 1 prior-period lead conversion."));
   });
 
@@ -725,9 +783,17 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(metrics.serviceHours, 0.5);
     assert.equal(metrics.completedStops, 1);
     assert.equal(metrics.completedJobs, 3);
+    assert.equal(metrics.rawCompletedJobRows, 5);
+    assert.equal(metrics.eligibleRows, 3);
+    assert.equal(metrics.excludedRows, 2);
+    assert.equal(metrics.sameStopGroupsCreated, 1);
+    assert.equal(metrics.scoopSprayCombinedStopGroups, 1);
     assert.equal(metrics.pricedCompletedJobs, 2);
     assert.equal(metrics.timedCompletedJobs, 1);
     assert.equal(metrics.zeroDurationRevenueJobs, 1);
+    assert.equal(metrics.zeroDurationRows, 1);
+    assert.equal(metrics.zeroDurationRowsAttachedToValidStop, 1);
+    assert.equal(metrics.zeroDurationRowsExcluded, 0);
     assert.equal(metrics.scoopingRevenue, 60);
     assert.equal(metrics.sprayRevenue, 20);
     assert.equal(metrics.revenuePerStop, 80);
@@ -743,6 +809,8 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
     assert.equal(summary.revenuePerHourMetrics.sprayRevenue, 20);
+    assert.equal(summary.averageRevenuePerShiftHour, null);
+    assert.equal(summary.revenuePerShiftHourMetrics.status, "unavailable");
     assert(pool.queries.some((query) => query.sql.includes("FROM sweepandgo_completed_jobs")));
   });
 
@@ -752,9 +820,26 @@ describe("dashboard KPI aggregation", () => {
     ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
 
     assert.equal(metrics.status, "unavailable");
-    assert.equal(metrics.serviceRevenue, 20);
+    assert.equal(metrics.serviceRevenue, 0);
     assert.equal(metrics.serviceHours, 0);
+    assert.equal(metrics.zeroDurationRows, 1);
+    assert.equal(metrics.zeroDurationRowsAttachedToValidStop, 0);
+    assert.equal(metrics.zeroDurationRowsExcluded, 1);
     assert.equal(metrics.unavailableReason, "Stored completed job rows did not include usable positive service duration.");
+  });
+
+  it("calculates average revenue per shift hour from deduped payroll shift rows", async () => {
+    const summary = await new PostgresDashboardDataSource(new CompletedJobsWithShiftPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+    const html = renderDashboard(dashboardData(summary));
+
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
+    assert.equal(summary.revenuePerShiftHourMetrics.rawShiftRows, 3);
+    assert.equal(summary.revenuePerShiftHourMetrics.dedupedShiftRows, 2);
+    assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 3);
+    assert.equal(summary.averageRevenuePerShiftHour, 26.67);
+    assert(html.includes("Average Revenue Per Shift Hour"));
+    assert(html.includes("Service Productivity"));
   });
 
   it("uses safe cost per new customer display rules", async () => {
@@ -1005,6 +1090,18 @@ function completedJobRow(data: Record<string, unknown>) {
         ...data
       }
     }
+  };
+}
+
+function payrollShiftRow(data: Record<string, unknown>, receivedAt: string) {
+  return {
+    eventType: "payroll:shift_info",
+    receivedAt,
+    processingStatus: "processed",
+    payload: {
+      data
+    },
+    eventFingerprint: `shift-${receivedAt}`
   };
 }
 

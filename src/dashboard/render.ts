@@ -105,9 +105,9 @@ function renderSummary(summary: DashboardSummary): string {
       label: "New Recurring Customers",
       value: String(summary.newRecurringCustomers),
       breakdown: [
-        ...sourceBreakdownRows(summary.newRecurringCustomerBreakdown),
+        ...sourceBreakdownRows(summary.newRecurringCustomerBreakdown, { combineOtherUnknown: true }),
         ...(summary.priorPeriodLeadConversions > 0
-          ? [{ label: "Prior-period leads", value: String(summary.priorPeriodLeadConversions) }]
+          ? [{ label: "Prior-period lead", value: String(summary.priorPeriodLeadConversions) }]
           : [])
       ]
     },
@@ -148,13 +148,17 @@ function renderSummary(summary: DashboardSummary): string {
       value: maybeMoney(summary.averageRevenuePerHour),
       note: summary.averageRevenuePerHourReason,
       breakdown: [
-        { label: "Stops", value: String(summary.revenuePerHourMetrics.completedStops) },
         { label: "Service Hrs", value: String(summary.revenuePerHourMetrics.serviceHours) },
-        { label: "Revenue", value: money(summary.revenuePerHourMetrics.serviceRevenue) },
-        { label: "Revenue / Stop", value: maybeMoney(summary.revenuePerHourMetrics.revenuePerStop) },
-        { label: "Avg Min / Stop", value: summary.revenuePerHourMetrics.averageMinutesPerStop === null ? "n/a" : String(summary.revenuePerHourMetrics.averageMinutesPerStop) },
-        { label: "Scooping", value: money(summary.revenuePerHourMetrics.scoopingRevenue) },
-        { label: "Spray", value: money(summary.revenuePerHourMetrics.sprayRevenue) }
+        { label: "Revenue", value: money(summary.revenuePerHourMetrics.serviceRevenue) }
+      ]
+    },
+    {
+      label: "Average Revenue Per Shift Hour",
+      value: maybeMoney(summary.averageRevenuePerShiftHour),
+      note: summary.averageRevenuePerShiftHourReason,
+      breakdown: [
+        { label: "Shift Hrs", value: String(summary.revenuePerShiftHourMetrics.shiftHours) },
+        { label: "Revenue", value: money(summary.revenuePerShiftHourMetrics.serviceRevenue) }
       ]
     },
     { label: "Net Customer Growth", value: signed(summary.netRecurringCustomerGrowth) },
@@ -185,7 +189,32 @@ function renderSummary(summary: DashboardSummary): string {
       <div class="cards owner-scoreboard secondary">
         ${secondaryCards.map(renderCard).join("")}
       </div>
+      ${renderServiceProductivity(summary)}
     </section>
+  `;
+}
+
+function renderServiceProductivity(summary: DashboardSummary): string {
+  const metrics = summary.revenuePerHourMetrics;
+  return `
+    <div class="productivity-panel">
+      <h3>Service Productivity</h3>
+      <div class="mini-stats">
+        ${[
+          ["Completed stops", String(metrics.completedStops)],
+          ["Revenue / stop", maybeMoney(metrics.revenuePerStop)],
+          ["Avg min / stop", metrics.averageMinutesPerStop === null ? "No data" : String(metrics.averageMinutesPerStop)],
+          ["Scooping revenue", money(metrics.scoopingRevenue)],
+          ["Spray revenue", money(metrics.sprayRevenue)],
+          ["Same-stop scoop/spray", String(metrics.scoopSprayCombinedStopGroups)]
+        ].map(([label, value]) => `
+          <div>
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </div>
   `;
 }
 
@@ -415,6 +444,12 @@ function pageShell(input: { title: string; body: string }): string {
     .card-breakdown dt, .card-breakdown dd { margin:0; }
     .card-breakdown dd { color:var(--navy); }
     .card small { display:block; margin-top:8px; color:#557083; font-weight:700; line-height:1.35; }
+    .productivity-panel { margin-top:12px; background:white; border:1px solid var(--line); border-radius:8px; padding:16px; box-shadow:0 8px 24px rgba(16,42,67,.06); }
+    .productivity-panel h3 { margin:0 0 12px; color:var(--navy); font-size:1rem; }
+    .mini-stats { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; }
+    .mini-stats div { background:var(--soft); border-radius:8px; padding:10px; }
+    .mini-stats span { display:block; color:#557083; font-size:.78rem; font-weight:800; }
+    .mini-stats strong { display:block; margin-top:4px; color:var(--navy); font-size:1rem; overflow-wrap:anywhere; }
     .notes p { margin:4px 0; }
     .grid-two { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; }
@@ -435,9 +470,9 @@ function pageShell(input: { title: string; body: string }): string {
     .stale-sync td { background:#fffaf0; }
     .error { color:#b42318; font-weight:800; margin:0; }
     code { background:var(--soft); padding:2px 5px; border-radius:5px; }
-    @media (max-width: 1100px) { .owner-scoreboard.primary, .owner-scoreboard.secondary { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 1100px) { .owner-scoreboard.primary, .owner-scoreboard.secondary, .mini-stats { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
     @media (max-width: 850px) { .topbar { align-items:flex-start; flex-direction:column; } .brand-lockup { align-items:flex-start; } .brand-logo { width:74px; height:74px; } .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary, .grid-two { grid-template-columns:1fr; } .bar-row { grid-template-columns:48px 1fr 64px; } }
-    @media (max-width: 520px) { .brand-lockup { flex-direction:column; gap:10px; } .brand-logo { width:88px; height:88px; } }
+    @media (max-width: 520px) { .brand-lockup { flex-direction:column; gap:10px; } .brand-logo { width:88px; height:88px; } .mini-stats { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>${input.body}</body>

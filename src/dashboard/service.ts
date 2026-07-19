@@ -8,6 +8,7 @@ import type {
   DashboardCostPerNewCustomerStatus,
   DashboardDataSource,
   DashboardRevenuePerHourMetrics,
+  DashboardRevenuePerShiftHourMetrics,
   DashboardSourceBreakdown,
   DashboardSourceRow,
   DashboardSources,
@@ -31,6 +32,14 @@ const OWNER_CONFIRMED_CHURN_BASELINES = [
     note: "July churn uses owner-confirmed starting active count of 252 because historical active roster snapshot was not available."
   }
 ] as const;
+
+type PayrollShiftRow = {
+  employeeId?: string;
+  shiftId?: string;
+  shiftDate?: string;
+  durationMinutes?: number;
+  receivedAt?: string;
+};
 
 type NewRecurringCustomerMetrics = {
   total: number;
@@ -72,6 +81,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.closeRateMetrics(range),
       this.googleAdsStatus()
     ]);
+    const priorPeriodLeadConversions = closeRateMetricsBase.totalPriorPeriodLeadConversions;
 
     const leadBreakdown = { ...leads };
     const recurringBreakdown = { ...customers.bySource };
@@ -79,7 +89,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const websiteLeads = leadBreakdown.website;
     const otherLeads = leadBreakdown.other + leadBreakdown.unknown;
     const totalLeads = facebookLeads + websiteLeads + otherLeads;
-    const newRecurringCustomers = customers.total;
+    const newRecurringCustomers = customers.total + priorPeriodLeadConversions;
     const totalAdSpend = adSpend.meta + adSpend.google;
     const estimatedMrrAdded = customers.mrrAdded === null ? null : roundMoney(customers.mrrAdded);
     const costPerNewCustomer = costPerNewRecurringCustomer(totalAdSpend, newRecurringCustomers);
@@ -91,6 +101,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const averageRevenuePerHour = revenuePerHourMetrics.status === "available" && revenuePerHourMetrics.serviceHours > 0
       ? roundMoney(revenuePerHourMetrics.serviceRevenue / revenuePerHourMetrics.serviceHours)
       : null;
+    const revenuePerShiftHourMetrics = await this.revenuePerShiftHourMetrics(range, revenuePerHourMetrics);
+    const averageRevenuePerShiftHour = revenuePerShiftHourMetrics.revenuePerShiftHour;
     const closeRateMetrics = {
       ...closeRateMetricsBase,
       costPerNewCustomerStatus: costPerNewCustomer.status
@@ -138,7 +150,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         ? (revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.")
         : "Completed job revenue divided by recorded service time. Does not include drive time or breaks.",
       revenuePerHourMetrics,
-      priorPeriodLeadConversions: closeRateMetrics.totalPriorPeriodLeadConversions,
+      averageRevenuePerShiftHour,
+      averageRevenuePerShiftHourReason: averageRevenuePerShiftHour === null
+        ? (revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour unavailable until stored Sweep&Go payroll shift rows include usable shift duration.")
+        : "Completed job revenue divided by recorded tech shift hours. Includes non-service route time captured in shifts.",
+      revenuePerShiftHourMetrics,
+      priorPeriodLeadConversions,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
       closeRate: closeRateMetrics.totalCloseRate,
       closeRateMetrics,
@@ -149,6 +166,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         churnRate,
         lifetimeValue,
         revenuePerHourMetrics,
+        revenuePerShiftHourMetrics,
         closeRateMetrics,
         churnDenominatorNote: churnDenominator.note,
         cancellationMetrics: cancellations,
@@ -639,6 +657,68 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     })), range);
   }
 
+  private async revenuePerShiftHourMetrics(
+    range: DashboardDateRange,
+    revenuePerHourMetrics: DashboardRevenuePerHourMetrics
+  ): Promise<DashboardRevenuePerShiftHourMetrics> {
+    const result = await this.pool.query(
+      `SELECT id::text AS id,
+              event_type AS "eventType",
+              received_at::text AS "receivedAt",
+              processing_status AS "processingStatus",
+              payload,
+              event_fingerprint AS "eventFingerprint"
+       FROM webhook_events
+       WHERE event_type IN ('payroll:shift_info', 'staff:staff_clock_in')
+         AND processing_status <> 'failed'
+         AND (
+           payload->'data'->>'shift_date' BETWEEN $1::text AND $2::text
+           OR (
+             payload->'data'->>'shift_date' IS NULL
+             AND received_at::date BETWEEN $1::date AND $2::date
+           )
+         )
+       ORDER BY received_at`,
+      [range.startDate, range.endDate]
+    );
+
+    const payrollRows = result.rows.filter((row) => stringValue(row.eventType) === "payroll:shift_info");
+    const rawShiftRows = payrollRows.length;
+    if (rawShiftRows === 0) {
+      return {
+        serviceRevenue: revenuePerHourMetrics.serviceRevenue,
+        shiftHours: 0,
+        rawShiftRows,
+        dedupedShiftRows: 0,
+        revenuePerShiftHour: null,
+        status: "unavailable",
+        unavailableReason: "No stored Sweep&Go payroll shift rows were available for the selected range."
+      };
+    }
+
+    const dedupedShifts = dedupePayrollShifts(payrollRows
+      .map(parsePayrollShiftRow)
+      .filter((shift) => shift.shiftDate && shift.shiftDate >= range.startDate && shift.shiftDate <= range.endDate));
+    const shiftMinutes = dedupedShifts.reduce((sum, shift) => sum + (shift.durationMinutes ?? 0), 0);
+    const shiftHours = roundMoney(shiftMinutes / 60);
+    const dedupedShiftRows = dedupedShifts.length;
+    const revenuePerShiftHour = revenuePerHourMetrics.serviceRevenue > 0 && shiftHours > 0
+      ? roundMoney(revenuePerHourMetrics.serviceRevenue / shiftHours)
+      : null;
+
+    return {
+      serviceRevenue: revenuePerHourMetrics.serviceRevenue,
+      shiftHours,
+      rawShiftRows,
+      dedupedShiftRows,
+      revenuePerShiftHour,
+      status: revenuePerShiftHour === null ? "unavailable" : "available",
+      unavailableReason: revenuePerShiftHour === null
+        ? "Stored Sweep&Go payroll shift rows did not include usable positive shift duration."
+        : undefined
+    };
+  }
+
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
     const [leadRows, customerRows, matchRows] = await Promise.all([
       this.pool.query(
@@ -741,6 +821,15 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       averageRevenuePerHour: null,
       averageRevenuePerHourReason: "Average Revenue Per Service Hour unavailable because no database connection is configured.",
       revenuePerHourMetrics: {
+        rawCompletedJobRows: 0,
+        eligibleRows: 0,
+        excludedRows: 0,
+        sameStopGroupsCreated: 0,
+        scoopSprayCombinedStopGroups: 0,
+        zeroDurationRows: 0,
+        zeroDurationRowsAttachedToValidStop: 0,
+        zeroDurationRowsExcluded: 0,
+        missingPriceRows: 0,
         serviceRevenue: 0,
         serviceHours: 0,
         completedJobs: 0,
@@ -753,6 +842,17 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
         initialCleanupRevenue: 0,
         revenuePerStop: null,
         averageMinutesPerStop: null,
+        status: "unavailable",
+        unavailableReason: "No database connection is configured."
+      },
+      averageRevenuePerShiftHour: null,
+      averageRevenuePerShiftHourReason: "Average Revenue Per Shift Hour unavailable because no database connection is configured.",
+      revenuePerShiftHourMetrics: {
+        serviceRevenue: 0,
+        shiftHours: 0,
+        rawShiftRows: 0,
+        dedupedShiftRows: 0,
+        revenuePerShiftHour: null,
         status: "unavailable",
         unavailableReason: "No database connection is configured."
       },
@@ -838,6 +938,7 @@ function dataNotes(input: {
   churnRate: number | null;
   lifetimeValue: number | null;
   revenuePerHourMetrics: DashboardRevenuePerHourMetrics;
+  revenuePerShiftHourMetrics: DashboardRevenuePerShiftHourMetrics;
   closeRateMetrics: DashboardCloseRateMetrics;
   churnDenominatorNote?: string;
   cancellationMetrics: DashboardCancellationMetrics;
@@ -877,6 +978,11 @@ function dataNotes(input: {
     notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour is unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.");
   } else {
     notes.push("Average Revenue Per Service Hour uses completed job revenue divided by recorded service time. It does not include drive time or breaks.");
+  }
+  if (input.revenuePerShiftHourMetrics.status !== "available") {
+    notes.push(input.revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour is unavailable until stored Sweep&Go payroll shift rows include usable shift duration.");
+  } else {
+    notes.push("Average Revenue Per Shift Hour uses completed job revenue divided by recorded tech shift hours, including non-service route time captured in shifts.");
   }
   if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {
     notes.push(`${input.closeRateMetrics.totalPriorPeriodLeadConversions} conversion(s) in this range came from leads created before the selected period; they do not increase the selected-period lead count.`);
@@ -937,6 +1043,71 @@ function integerValue(value: unknown): number {
 function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parsePayrollShiftRow(row: Record<string, unknown>): PayrollShiftRow {
+  const payload = recordValue(row.payload);
+  const data = recordValue(payload.data);
+  return {
+    employeeId: stringValue(data.employee_id),
+    shiftId: stringValue(data.shift_id),
+    shiftDate: stringValue(data.shift_date)?.slice(0, 10) ?? stringValue(row.receivedAt)?.slice(0, 10),
+    durationMinutes: durationMinutes(data.duration_time),
+    receivedAt: stringValue(row.receivedAt)
+  };
+}
+
+function dedupePayrollShifts(shifts: PayrollShiftRow[]): PayrollShiftRow[] {
+  const groups = new Map<string, PayrollShiftRow[]>();
+  for (const shift of shifts) {
+    const key = [
+      shift.employeeId ?? "unknown",
+      shift.shiftDate ?? "unknown",
+      shift.shiftId ?? shift.receivedAt ?? "unknown"
+    ].join(":");
+    groups.set(key, [...(groups.get(key) ?? []), shift]);
+  }
+  return [...groups.values()].map((group) => [...group].sort(comparePayrollShifts)[0]);
+}
+
+function comparePayrollShifts(left: PayrollShiftRow, right: PayrollShiftRow): number {
+  const leftHasDuration = (left.durationMinutes ?? 0) > 0 ? 1 : 0;
+  const rightHasDuration = (right.durationMinutes ?? 0) > 0 ? 1 : 0;
+  if (rightHasDuration !== leftHasDuration) {
+    return rightHasDuration - leftHasDuration;
+  }
+  return timestampValue(right.receivedAt) - timestampValue(left.receivedAt);
+}
+
+function durationMinutes(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  const raw = stringValue(value);
+  if (!raw) {
+    return undefined;
+  }
+  const parts = raw.split(":").map((part) => Number(part));
+  if ((parts.length === 2 || parts.length === 3) && parts.every(Number.isFinite)) {
+    const [hours, minutes, seconds = 0] = parts;
+    const total = hours * 60 + minutes + seconds / 60;
+    return total > 0 ? total : undefined;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function timestampValue(value: unknown): number {
+  const raw = stringValue(value);
+  if (!raw) {
+    return 0;
+  }
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function percentage(part: number, total: number): number | null {

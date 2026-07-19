@@ -153,7 +153,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       averageRevenuePerHour,
       averageRevenuePerHourReason: averageRevenuePerHour === null
         ? (revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.")
-        : "Completed job revenue divided by recorded service time. Does not include drive time or breaks.",
+        : "Revenue includes completed priced jobs. Service hours exclude zero-duration rows. Missing-price completed jobs are flagged.",
       revenuePerHourMetrics,
       averageRevenuePerShiftHour,
       averageRevenuePerShiftHourReason: averageRevenuePerShiftHour === null
@@ -989,7 +989,7 @@ function dataNotes(input: {
   if (input.revenuePerHourMetrics.status !== "available") {
     notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Average Revenue Per Service Hour is unavailable until stored Sweep&Go completed job rows include usable service revenue and service duration.");
   } else {
-    notes.push("Average Revenue Per Service Hour uses completed job revenue divided by recorded service time. It does not include drive time or breaks.");
+    notes.push("Average Revenue Per Service Hour uses completed priced job revenue divided by positive recorded service time. Zero-duration completed revenue is included in revenue but not service hours; missing-price completed jobs are flagged.");
   }
   if (input.revenuePerShiftHourMetrics.status !== "available") {
     notes.push(input.revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour is unavailable until stored Sweep&Go payroll shift rows include usable shift duration.");

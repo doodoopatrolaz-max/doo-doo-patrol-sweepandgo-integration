@@ -74,36 +74,28 @@ function calculateParsedCompletedJobRevenueMetrics(
 ): DashboardRevenuePerHourMetrics {
   const completedJobs = parsedJobs.filter((job) => !isExcludedJob(job));
   const missingPriceRows = completedJobs.filter((job) => job.price === undefined).length;
-  const pricedJobs = completedJobs.filter((job) => job.price !== undefined && job.price > 0);
+  const pricedJobs = completedJobs.filter((job) => job.price !== undefined);
   const stopGroups = groupJobsByStop(completedJobs);
-  const timedStopKeys = new Set([...stopGroups.entries()]
-    .filter(([, jobs]) => jobs.some((job) => (job.durationMinutes ?? 0) > 0))
-    .map(([key]) => key));
-  const revenueJobs = pricedJobs.filter((job) => {
-    if ((job.durationMinutes ?? 0) > 0) {
-      return true;
-    }
-    return timedStopKeys.has(stopGroupKey(job));
-  });
-  const timedRevenueJobs = revenueJobs.filter((job) => (job.durationMinutes ?? 0) > 0);
-  const serviceRevenue = revenueJobs.reduce((sum, job) => sum + (job.price ?? 0), 0);
-  const serviceMinutes = timedRevenueJobs.reduce((sum, job) => sum + (job.durationMinutes ?? 0), 0);
+  const timedCompletedJobs = completedJobs.filter((job) => (job.durationMinutes ?? 0) > 0);
+  const serviceRevenue = pricedJobs.reduce((sum, job) => sum + (job.price ?? 0), 0);
+  const serviceMinutes = timedCompletedJobs.reduce((sum, job) => sum + (job.durationMinutes ?? 0), 0);
   const serviceHours = serviceMinutes / 60;
-  const completedStopKeys = new Set(revenueJobs.map(stopGroupKey));
-  const revenueGroups = groupJobsByStop(revenueJobs);
-  const scoopSprayCombinedStopGroups = [...revenueGroups.values()].filter((jobs) =>
+  const completedStopKeys = new Set(completedJobs.map(stopGroupKey));
+  const scoopSprayCombinedStopGroups = [...stopGroups.values()].filter((jobs) =>
     jobs.some((job) => job.isSpray) && jobs.some((job) => !job.isSpray && !job.isInitial)
   ).length;
   const zeroDurationRows = pricedJobs.filter((job) => (job.durationMinutes ?? 0) <= 0);
-  const zeroDurationRowsAttachedToValidStop = zeroDurationRows.filter((job) => timedStopKeys.has(stopGroupKey(job))).length;
-  const zeroDurationRowsExcluded = zeroDurationRows.length - zeroDurationRowsAttachedToValidStop;
-  const sprayRevenue = revenueJobs
+  const zeroDurationRowsAttachedToValidStop = zeroDurationRows.filter((job) =>
+    stopGroups.get(stopGroupKey(job))?.some((groupJob) => (groupJob.durationMinutes ?? 0) > 0)
+  ).length;
+  const zeroDurationRowsExcluded = 0;
+  const sprayRevenue = pricedJobs
     .filter((job) => job.isSpray)
     .reduce((sum, job) => sum + (job.price ?? 0), 0);
-  const initialRevenue = revenueJobs
+  const initialRevenue = pricedJobs
     .filter((job) => job.isInitial)
     .reduce((sum, job) => sum + (job.price ?? 0), 0);
-  const scoopingRevenue = revenueJobs
+  const scoopingRevenue = pricedJobs
     .filter((job) => !job.isSpray && !job.isInitial)
     .reduce((sum, job) => sum + (job.price ?? 0), 0);
 
@@ -121,9 +113,9 @@ function calculateParsedCompletedJobRevenueMetrics(
     serviceHours: roundMoney(serviceHours),
     completedJobs: completedJobs.length,
     completedStops: completedStopKeys.size,
-    pricedCompletedJobs: revenueJobs.length,
-    timedCompletedJobs: timedRevenueJobs.length,
-    zeroDurationRevenueJobs: revenueJobs.length - timedRevenueJobs.length,
+    pricedCompletedJobs: pricedJobs.length,
+    timedCompletedJobs: timedCompletedJobs.length,
+    zeroDurationRevenueJobs: zeroDurationRows.length,
     scoopingRevenue: roundMoney(scoopingRevenue),
     sprayRevenue: roundMoney(sprayRevenue),
     initialCleanupRevenue: roundMoney(initialRevenue),

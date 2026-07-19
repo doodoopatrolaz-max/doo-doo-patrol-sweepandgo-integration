@@ -455,7 +455,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.churnRateDenominator, 20);
     assert.equal(summary.lifetimeValue, 1900);
     assert.equal(summary.averageRevenuePerHour, 160);
-    assert.equal(summary.averageRevenuePerHourReason, "Completed job revenue divided by recorded service time. Does not include drive time or breaks.");
+    assert.equal(summary.averageRevenuePerHourReason, "Revenue includes completed priced jobs. Service hours exclude zero-duration rows. Missing-price completed jobs are flagged.");
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
     assert.equal(summary.revenuePerHourMetrics.serviceHours, 0.5);
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
@@ -782,24 +782,40 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(metrics.status, "available");
     assert.equal(metrics.serviceRevenue, 80);
-    assert.equal(metrics.serviceHours, 0.5);
-    assert.equal(metrics.completedStops, 1);
+    assert.equal(metrics.serviceHours, 1.5);
+    assert.equal(metrics.completedStops, 2);
     assert.equal(metrics.completedJobs, 3);
     assert.equal(metrics.rawCompletedJobRows, 5);
     assert.equal(metrics.eligibleRows, 3);
     assert.equal(metrics.excludedRows, 2);
-    assert.equal(metrics.sameStopGroupsCreated, 1);
+    assert.equal(metrics.sameStopGroupsCreated, 2);
     assert.equal(metrics.scoopSprayCombinedStopGroups, 1);
-    assert.equal(metrics.pricedCompletedJobs, 2);
-    assert.equal(metrics.timedCompletedJobs, 1);
+    assert.equal(metrics.pricedCompletedJobs, 3);
+    assert.equal(metrics.timedCompletedJobs, 2);
     assert.equal(metrics.zeroDurationRevenueJobs, 1);
     assert.equal(metrics.zeroDurationRows, 1);
     assert.equal(metrics.zeroDurationRowsAttachedToValidStop, 1);
     assert.equal(metrics.zeroDurationRowsExcluded, 0);
     assert.equal(metrics.scoopingRevenue, 60);
     assert.equal(metrics.sprayRevenue, 20);
-    assert.equal(metrics.revenuePerStop, 80);
-    assert.equal(metrics.averageMinutesPerStop, 30);
+    assert.equal(metrics.revenuePerStop, 40);
+    assert.equal(metrics.averageMinutesPerStop, 45);
+  });
+
+  it("excludes completed missing-price jobs from revenue while keeping usable service time", () => {
+    const metrics = calculateCompletedJobRevenueMetrics([
+      completedJobRow({ client_id: "priced-yard", price: "80.00", duration: "00:40", type: "recurring" }),
+      completedJobRow({ client_id: "missing-price-yard", duration: "00:20", type: "one_time" })
+    ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(metrics.status, "available");
+    assert.equal(metrics.serviceRevenue, 80);
+    assert.equal(metrics.serviceHours, 1);
+    assert.equal(metrics.missingPriceRows, 1);
+    assert.equal(metrics.completedStops, 2);
+    assert.equal(metrics.pricedCompletedJobs, 1);
+    assert.equal(metrics.timedCompletedJobs, 2);
+    assert.equal(metrics.revenuePerStop, 40);
   });
 
   it("uses stored completed job facts for dashboard service-hour revenue when available", async () => {
@@ -822,11 +838,11 @@ describe("dashboard KPI aggregation", () => {
     ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
 
     assert.equal(metrics.status, "unavailable");
-    assert.equal(metrics.serviceRevenue, 0);
+    assert.equal(metrics.serviceRevenue, 20);
     assert.equal(metrics.serviceHours, 0);
     assert.equal(metrics.zeroDurationRows, 1);
     assert.equal(metrics.zeroDurationRowsAttachedToValidStop, 0);
-    assert.equal(metrics.zeroDurationRowsExcluded, 1);
+    assert.equal(metrics.zeroDurationRowsExcluded, 0);
     assert.equal(metrics.unavailableReason, "Stored completed job rows did not include usable positive service duration.");
   });
 

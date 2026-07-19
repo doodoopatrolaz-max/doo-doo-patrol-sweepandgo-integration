@@ -110,6 +110,33 @@ class GoogleSpendPool extends FakePool {
   }
 }
 
+class ActiveRosterSnapshotPool extends FakePool {
+  override async query(sql: string, params: unknown[] = []) {
+    this.queries.push({ sql, params });
+    if (sql.includes("to_regclass('public.sweepandgo_active_roster_snapshots')")) {
+      return { rows: [{ table_name: "sweepandgo_active_roster_snapshots" }] };
+    }
+    if (sql.includes("FROM sweepandgo_active_roster_snapshots")) {
+      return {
+        rows: [{
+          active_client_count: 258,
+          derived_active_recurring_count: 183,
+          updated_at: "2026-07-18T11:00:00.000Z"
+        }]
+      };
+    }
+    if (sql.includes("FROM customers c")) {
+      return {
+        rows: [{
+          active_mrr: 0,
+          priced_active_clients: 0
+        }]
+      };
+    }
+    return await super.query(sql, params);
+  }
+}
+
 class SyncHealthPool {
   async query(sql: string) {
     if (sql.includes("FROM sync_runs")) {
@@ -305,7 +332,19 @@ describe("dashboard KPI aggregation", () => {
     assert(html.indexOf("Total Active Clients") < html.indexOf("Total Leads"));
     assert(html.includes("Average Monthly Ticket"));
     assert(html.includes("$79.00"));
-    assert(html.includes("As of latest Sweep&amp;Go sync"));
+    assert(html.includes("As of latest Sweep&amp;Go active roster snapshot"));
+  });
+
+  it("uses the latest Sweep&Go active roster snapshot for Total Active Clients", async () => {
+    const pool = new ActiveRosterSnapshotPool();
+    const service = new PostgresDashboardDataSource(pool);
+    const summary = await service.getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+
+    assert.equal(summary.totalActiveClients, 258);
+    assert.equal(summary.totalActiveClientsNeedsVerification, false);
+    assert.equal(summary.totalActiveClientsSource, "Latest Sweep&Go active roster snapshot from the official active client count.");
+    assert.equal(summary.estimatedActiveMrr, null);
+    assert.equal(summary.averageMonthlyTicket, null);
   });
 
   it("shows Average Monthly Ticket unavailable when active subscription amounts are incomplete", async () => {

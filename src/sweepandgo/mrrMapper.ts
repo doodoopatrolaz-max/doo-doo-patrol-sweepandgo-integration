@@ -2,7 +2,7 @@ export type SweepAndGoSubscriptionMrrItem = {
   name?: string;
   amount: number;
   status: "active";
-  interval: "monthly";
+  interval: "monthly" | "weekly" | "biweekly" | "quarterly" | "yearly";
   sourcePath: string;
 };
 
@@ -95,17 +95,18 @@ export function calculateDirectActiveSubscriptionMrr(input: unknown): SweepAndGo
       continue;
     }
     result.fieldPaths.intervalPaths.push(`${candidate.path}.${interval.path}`);
-    if (interval.value !== "monthly") {
+    if (interval.value === "unsupported") {
       result.nonMonthlySubscriptions += 1;
       pushUnique(result.reviewReasons, "non_monthly_interval");
       continue;
     }
 
+    const monthlyAmount = roundMoney(amount.value * interval.multiplier);
     result.activeSubscriptions.push({
       name: subscriptionName(candidate.value),
-      amount: amount.value,
+      amount: monthlyAmount,
       status: "active",
-      interval: "monthly",
+      interval: interval.value,
       sourcePath: candidate.path
     });
   }
@@ -204,25 +205,43 @@ function subscriptionAmount(value: Record<string, unknown>): { value?: number; p
   return {};
 }
 
-function subscriptionInterval(value: Record<string, unknown>): { value?: "monthly" | "non_monthly"; path?: string } {
+function subscriptionInterval(value: Record<string, unknown>): {
+  value?: "monthly" | "weekly" | "biweekly" | "quarterly" | "yearly" | "unsupported";
+  multiplier: number;
+  path?: string;
+} {
   for (const path of ["billing_interval", "billingInterval", "interval", "billing_frequency", "frequency"]) {
     const interval = normalizeInterval(value[path]);
     if (interval) {
-      return { value: interval, path };
+      return { ...interval, path };
     }
   }
-  return {};
+  return { multiplier: 0 };
 }
 
-function normalizeInterval(value: unknown): "monthly" | "non_monthly" | undefined {
-  const text = stringValue(value)?.toLowerCase();
+function normalizeInterval(value: unknown):
+  | { value: "monthly" | "weekly" | "biweekly" | "quarterly" | "yearly" | "unsupported"; multiplier: number }
+  | undefined {
+  const text = stringValue(value)?.toLowerCase().replace(/_/g, " ").replace(/-/g, " ");
   if (!text) {
     return undefined;
   }
   if (text === "monthly" || text === "month" || text === "1 month" || text.includes("monthly")) {
-    return "monthly";
+    return { value: "monthly", multiplier: 1 };
   }
-  return "non_monthly";
+  if (text === "weekly" || text === "week" || text === "1 week") {
+    return { value: "weekly", multiplier: 4.33 };
+  }
+  if (text === "biweekly" || text === "bi weekly" || text === "every two weeks" || text === "2 weeks") {
+    return { value: "biweekly", multiplier: 2.165 };
+  }
+  if (text === "quarterly" || text === "quarter" || text === "3 months") {
+    return { value: "quarterly", multiplier: 1 / 3 };
+  }
+  if (text === "yearly" || text === "annually" || text === "annual" || text === "year") {
+    return { value: "yearly", multiplier: 1 / 12 };
+  }
+  return { value: "unsupported", multiplier: 0 };
 }
 
 function subscriptionName(value: Record<string, unknown>): string | undefined {

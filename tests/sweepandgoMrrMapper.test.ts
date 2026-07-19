@@ -67,9 +67,32 @@ describe("Sweep&Go direct active subscription MRR mapper", () => {
     assert.equal(result.pausedSubscriptionsIgnored, 1);
   });
 
-  it("flags non-monthly intervals for review", () => {
+  it("normalizes weekly subscription amounts to monthly", () => {
     const result = calculateDirectActiveSubscriptionMrr({
       billing: { subscriptions: [{ status: "ACTIVE", amount: "$79.00", billing_interval: "Weekly" }] }
+    });
+
+    assert.equal(result.monthlyRecurringRevenue, 342.07);
+    assert.equal(result.activeSubscriptions[0].interval, "weekly");
+  });
+
+  it("normalizes biweekly, quarterly, and yearly intervals to monthly", () => {
+    const result = calculateDirectActiveSubscriptionMrr({
+      billing: {
+        subscriptions: [
+          { status: "ACTIVE", amount: "$100.00", billing_interval: "bi-weekly" },
+          { status: "ACTIVE", amount: "$300.00", billing_interval: "quarterly" },
+          { status: "ACTIVE", amount: "$1200.00", billing_interval: "yearly" }
+        ]
+      }
+    });
+
+    assert.equal(result.monthlyRecurringRevenue, 416.5);
+  });
+
+  it("flags unsupported non-monthly intervals for review", () => {
+    const result = calculateDirectActiveSubscriptionMrr({
+      billing: { subscriptions: [{ status: "ACTIVE", amount: "$79.00", billing_interval: "Daily" }] }
     });
 
     assert.equal(result.monthlyRecurringRevenue, undefined);

@@ -12,6 +12,7 @@
     "migrate": "node --experimental-strip-types src/db/migrate.ts",
     "sync:sweepandgo:historical": "node --experimental-strip-types src/sweepandgo/historicalSync.ts",
     "sync:sweepandgo:daily": "node --experimental-strip-types src/sweepandgo/incrementalDailySync.ts",
+    "sync:sweepandgo:active-roster": "node --experimental-strip-types src/sweepandgo/activeRosterSnapshotSync.ts",
     "discover:gohighlevel:pipelines": "node --experimental-strip-types scripts/gohighlevel_discover_pipelines.mjs",
     "discover:gohighlevel:opportunities": "node --experimental-strip-types scripts/gohighlevel_limited_opportunity_discovery.mjs",
     "test:gohighlevel:webhook": "node --experimental-strip-types scripts/gohighlevel_webhook_synthetic_test.mjs",

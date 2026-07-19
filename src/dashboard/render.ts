@@ -80,7 +80,7 @@ function renderDateFilters(range: DashboardDateRange): string {
 
 function renderSummary(summary: DashboardSummary): string {
   const activeClientsNote = summary.totalActiveClientsAsOf
-    ? `As of latest Sweep&Go sync: ${summary.totalActiveClientsAsOf}`
+    ? `As of latest Sweep&Go active roster snapshot: ${summary.totalActiveClientsAsOf}`
     : "Needs verification";
   const primaryCards: DashboardCard[] = [
     {

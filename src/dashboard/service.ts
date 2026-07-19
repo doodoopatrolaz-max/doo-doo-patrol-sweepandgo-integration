@@ -69,9 +69,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       otherLeads,
       totalLeads,
       totalActiveClients: activeCustomers.asOf ? activeCustomers.activeClients : null,
-      totalActiveClientsSource: "Sweep&Go BI customers where status is active and at least one recurring service is present.",
+      totalActiveClientsSource: activeCustomers.source,
       totalActiveClientsAsOf: activeCustomers.asOf,
-      totalActiveClientsNeedsVerification: !activeCustomers.asOf,
+      totalActiveClientsNeedsVerification: activeCustomers.needsVerification,
       newRecurringCustomers,
       costPerLead: totalLeads > 0 ? roundMoney(totalAdSpend / totalLeads) : null,
       costPerNewRecurringCustomer: costPerNewCustomer.value,
@@ -377,8 +377,47 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     activeClients: number;
     activeMrr: number;
     pricedActiveClients: number;
+    source: string;
+    needsVerification: boolean;
     asOf?: string;
   }> {
+    const snapshotTable = await this.pool.query("SELECT to_regclass('public.sweepandgo_active_roster_snapshots') AS table_name");
+    if (snapshotTable.rows[0]?.table_name) {
+      const snapshotResult = await this.pool.query(
+        `SELECT active_client_count,
+                derived_active_recurring_count,
+                updated_at
+         FROM sweepandgo_active_roster_snapshots
+         ORDER BY snapshot_date DESC, updated_at DESC
+         LIMIT 1`
+      );
+      const snapshot = snapshotResult.rows[0];
+      if (snapshot) {
+        const mrrResult = await this.pool.query(
+          `SELECT COALESCE(SUM(c.monthly_recurring_revenue), 0)::float AS active_mrr,
+                  COUNT(DISTINCT c.id) FILTER (WHERE c.monthly_recurring_revenue IS NOT NULL)::int AS priced_active_clients
+           FROM customers c
+           WHERE c.status = 'active'
+             AND EXISTS (
+               SELECT 1
+               FROM customer_services cs
+               WHERE cs.customer_id = c.id
+                 AND cs.cadence = 'recurring'
+                 AND (cs.ended_on IS NULL OR cs.ended_on > CURRENT_DATE)
+             )`
+        );
+        const mrrRow = mrrResult.rows[0] ?? {};
+        return {
+          activeClients: integerValue(snapshot.active_client_count),
+          activeMrr: numberValue(mrrRow.active_mrr),
+          pricedActiveClients: integerValue(mrrRow.priced_active_clients),
+          source: "Latest Sweep&Go active roster snapshot from the official active client count.",
+          needsVerification: false,
+          asOf: isoString(snapshot.updated_at)
+        };
+      }
+    }
+
     const result = await this.pool.query(
       `SELECT COUNT(DISTINCT c.id)::int AS active_clients,
               COALESCE(SUM(c.monthly_recurring_revenue), 0)::float AS active_mrr,
@@ -406,6 +445,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       activeClients: integerValue(row.active_clients),
       activeMrr: numberValue(row.active_mrr),
       pricedActiveClients: integerValue(row.priced_active_clients),
+      source: "Sweep&Go BI customers where status is active and at least one recurring service is present.",
+      needsVerification: !row.latest_sweepandgo_sync_started_at,
       asOf: isoString(row.latest_sweepandgo_sync_started_at)
     };
   }

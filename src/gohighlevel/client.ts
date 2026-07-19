@@ -20,6 +20,12 @@ export type GoHighLevelPipeline = {
   [key: string]: unknown;
 };
 
+export type GoHighLevelContact = {
+  id?: string;
+  tags?: unknown[];
+  [key: string]: unknown;
+};
+
 export type SearchOpportunitiesInput = {
   locationId: string;
   pipelineId?: string;
@@ -72,12 +78,50 @@ export class GoHighLevelClient {
     });
   }
 
+  async getContact(contactId: string): Promise<GoHighLevelContact> {
+    const response = await this.readOnlyRequest(`/contacts/${encodeURIComponent(nonEmpty(contactId, "contactId"))}`);
+    const record = asRecord(response);
+    const contact = asRecord(record?.contact) ?? record;
+    return (contact ?? {}) as GoHighLevelContact;
+  }
+
+  async addContactTags(contactId: string, tags: string[]): Promise<unknown> {
+    const cleanedTags = tags.map((tag) => tag.trim()).filter(Boolean);
+    if (cleanedTags.length === 0) {
+      return { tags: [] };
+    }
+
+    return await this.writeRequest(`/contacts/${encodeURIComponent(nonEmpty(contactId, "contactId"))}/tags`, {
+      method: "POST",
+      body: {
+        tags: cleanedTags
+      }
+    });
+  }
+
   private async readOnlyRequest(path: string, init: { method?: "GET" | "POST"; body?: unknown } = {}): Promise<unknown> {
     const method = init.method ?? "GET";
     if (method !== "GET" && method !== "POST") {
       throw new Error(`HighLevel client blocked non-read discovery method: ${method}`);
     }
 
+    return await this.request(path, { ...init, method }, "read");
+  }
+
+  private async writeRequest(path: string, init: { method: "POST"; body?: unknown }): Promise<unknown> {
+    if (init.method !== "POST" || !path.match(/^\/contacts\/[^/]+\/tags$/)) {
+      throw new Error("HighLevel client blocked unsupported write request");
+    }
+
+    return await this.request(path, init, "write");
+  }
+
+  private async request(
+    path: string,
+    init: { method: "GET" | "POST"; body?: unknown },
+    mode: "read" | "write"
+  ): Promise<unknown> {
+    const method = init.method;
     const url = `${this.options.baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -102,10 +146,10 @@ export class GoHighLevelClient {
         continue;
       }
 
-      throw new Error(`HighLevel read request failed with HTTP ${response.status}`);
+      throw new Error(`HighLevel ${mode} request failed with HTTP ${response.status}`);
     }
 
-    throw new Error("HighLevel read request failed");
+    throw new Error(`HighLevel ${mode} request failed`);
   }
 }
 
@@ -115,6 +159,14 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonEmpty(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${label} is required`);
+  }
+  return trimmed;
 }
 
 async function sleep(ms: number): Promise<void> {

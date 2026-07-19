@@ -171,4 +171,41 @@ describe("GoHighLevel client", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("reads contact tags and writes only through the contact tag endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: Record<string, unknown> }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined
+      });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ contact: { tags: ["existing"] } })
+      } as Response;
+    }) as typeof fetch;
+
+    try {
+      const client = new GoHighLevelClient({
+        baseUrl: "https://services.example.invalid",
+        apiVersion: "2021-07-28",
+        privateIntegrationToken: "token_SANITIZED"
+      });
+      const contact = await client.getContact("ct_SANITIZED");
+      await client.addContactTags("ct_SANITIZED", ["website lead"]);
+
+      assert.deepEqual(contact.tags, ["existing"]);
+      assert.equal(requests.length, 2);
+      assert.equal(requests[0].url, "https://services.example.invalid/contacts/ct_SANITIZED");
+      assert.equal(requests[0].method, "GET");
+      assert.equal(requests[1].url, "https://services.example.invalid/contacts/ct_SANITIZED/tags");
+      assert.equal(requests[1].method, "POST");
+      assert.deepEqual(requests[1].body, { tags: ["website lead"] });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

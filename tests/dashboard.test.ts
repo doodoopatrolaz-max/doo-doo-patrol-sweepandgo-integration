@@ -225,9 +225,9 @@ class CompletedJobsWithShiftPool extends CompletedJobsFactPool {
     if (sql.includes("event_type IN ('payroll:shift_info'")) {
       return {
         rows: [
-          payrollShiftRow({ employee_id: "tech-1", shift_id: "shift-1", shift_date: "2026-07-01", duration_time: 120 }, "2026-07-01T18:00:00.000Z"),
-          payrollShiftRow({ employee_id: "tech-1", shift_id: "shift-1", shift_date: "2026-07-01", duration_time: 120 }, "2026-07-01T18:01:00.000Z"),
-          payrollShiftRow({ employee_id: "tech-2", shift_id: "shift-2", shift_date: "2026-07-01", duration_time: 60 }, "2026-07-01T18:02:00.000Z")
+          payrollShiftRow({ employee_id: 9638, shift_id: 101, shift_date: "2026-07-01", duration_time: 120 }, "2026-07-01T18:00:00.000Z"),
+          payrollShiftRow({ employee_id: 9638, shift_id: 101, shift_date: "2026-07-01", duration_time: 120 }, "2026-07-01T18:01:00.000Z"),
+          payrollShiftRow({ employee_id: 5501, shift_id: 102, shift_date: "2026-07-01", duration_time: "01:30" }, "2026-07-01T18:02:00.000Z")
         ]
       };
     }
@@ -341,6 +341,8 @@ const summaryOnlyDataSource: DashboardDataSource = {
         shiftHours: 0,
         rawShiftRows: 0,
         dedupedShiftRows: 0,
+        duplicateShiftRowsExcluded: 0,
+        technicianShiftHours: [],
         revenuePerShiftHour: null,
         status: "unavailable",
         unavailableReason: "No stored Sweep&Go payroll shift rows were available for the selected range."
@@ -836,8 +838,13 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
     assert.equal(summary.revenuePerShiftHourMetrics.rawShiftRows, 3);
     assert.equal(summary.revenuePerShiftHourMetrics.dedupedShiftRows, 2);
-    assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 3);
-    assert.equal(summary.averageRevenuePerShiftHour, 26.67);
+    assert.equal(summary.revenuePerShiftHourMetrics.duplicateShiftRowsExcluded, 1);
+    assert.deepEqual(summary.revenuePerShiftHourMetrics.technicianShiftHours, [
+      { technician: "Alejandro Hinostroza", hours: 2 },
+      { technician: "Bryan Long", hours: 1.5 }
+    ]);
+    assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 3.5);
+    assert.equal(summary.averageRevenuePerShiftHour, 22.86);
     assert(html.includes("Average Revenue Per Shift Hour"));
     assert(html.includes("Service Productivity"));
   });

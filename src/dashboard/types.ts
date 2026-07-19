@@ -117,6 +117,11 @@ export type DashboardRevenuePerShiftHourMetrics = {
   shiftHours: number;
   rawShiftRows: number;
   dedupedShiftRows: number;
+  duplicateShiftRowsExcluded: number;
+  technicianShiftHours: Array<{
+    technician: string;
+    hours: number;
+  }>;
   revenuePerShiftHour: number | null;
   status: "available" | "unavailable";
   unavailableReason?: string;

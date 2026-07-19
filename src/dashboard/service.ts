@@ -24,6 +24,11 @@ type Queryable = {
 const SOURCES: DashboardSourceRow["source"][] = ["facebook", "website", "other", "unknown"];
 const DASHBOARD_LEAD_EXCLUSION_METRICS = "ARRAY['lead_denominator', 'dashboard_leads']";
 export const TEMP_AVERAGE_MONTHLY_TICKET = 95;
+const SWEEPGO_EMPLOYEE_NAMES: Record<string, string> = {
+  "5501": "Bryan Long",
+  "9638": "Alejandro Hinostroza",
+  "11329": "Johnny Brown"
+};
 const OWNER_CONFIRMED_CHURN_BASELINES = [
   {
     startDate: "2026-07-01",
@@ -153,7 +158,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       averageRevenuePerShiftHour,
       averageRevenuePerShiftHourReason: averageRevenuePerShiftHour === null
         ? (revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour unavailable until stored Sweep&Go payroll shift rows include usable shift duration.")
-        : "Completed job revenue divided by recorded tech shift hours. Includes non-service route time captured in shifts.",
+        : "Completed job revenue divided by stored Sweep&Go Time & Mileage shift rows, deduped by employee, date, and shift.",
       revenuePerShiftHourMetrics,
       priorPeriodLeadConversions,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
@@ -690,6 +695,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         shiftHours: 0,
         rawShiftRows,
         dedupedShiftRows: 0,
+        duplicateShiftRowsExcluded: 0,
+        technicianShiftHours: [],
         revenuePerShiftHour: null,
         status: "unavailable",
         unavailableReason: "No stored Sweep&Go payroll shift rows were available for the selected range."
@@ -702,6 +709,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const shiftMinutes = dedupedShifts.reduce((sum, shift) => sum + (shift.durationMinutes ?? 0), 0);
     const shiftHours = roundMoney(shiftMinutes / 60);
     const dedupedShiftRows = dedupedShifts.length;
+    const technicianShiftHours = technicianShiftHourBreakdown(dedupedShifts);
     const revenuePerShiftHour = revenuePerHourMetrics.serviceRevenue > 0 && shiftHours > 0
       ? roundMoney(revenuePerHourMetrics.serviceRevenue / shiftHours)
       : null;
@@ -711,6 +719,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       shiftHours,
       rawShiftRows,
       dedupedShiftRows,
+      duplicateShiftRowsExcluded: rawShiftRows - dedupedShiftRows,
+      technicianShiftHours,
       revenuePerShiftHour,
       status: revenuePerShiftHour === null ? "unavailable" : "available",
       unavailableReason: revenuePerShiftHour === null
@@ -852,6 +862,8 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
         shiftHours: 0,
         rawShiftRows: 0,
         dedupedShiftRows: 0,
+        duplicateShiftRowsExcluded: 0,
+        technicianShiftHours: [],
         revenuePerShiftHour: null,
         status: "unavailable",
         unavailableReason: "No database connection is configured."
@@ -982,7 +994,7 @@ function dataNotes(input: {
   if (input.revenuePerShiftHourMetrics.status !== "available") {
     notes.push(input.revenuePerShiftHourMetrics.unavailableReason ?? "Average Revenue Per Shift Hour is unavailable until stored Sweep&Go payroll shift rows include usable shift duration.");
   } else {
-    notes.push("Average Revenue Per Shift Hour uses completed job revenue divided by recorded tech shift hours, including non-service route time captured in shifts.");
+    notes.push("Average Revenue Per Shift Hour uses completed job revenue divided by stored Sweep&Go Time & Mileage payroll shift rows, deduped by employee, date, and shift.");
   }
   if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {
     notes.push(`${input.closeRateMetrics.totalPriorPeriodLeadConversions} conversion(s) in this range came from leads created before the selected period; they do not increase the selected-period lead count.`);
@@ -1049,12 +1061,27 @@ function parsePayrollShiftRow(row: Record<string, unknown>): PayrollShiftRow {
   const payload = recordValue(row.payload);
   const data = recordValue(payload.data);
   return {
-    employeeId: stringValue(data.employee_id),
-    shiftId: stringValue(data.shift_id),
+    employeeId: identifierValue(data.employee_id),
+    shiftId: identifierValue(data.shift_id),
     shiftDate: stringValue(data.shift_date)?.slice(0, 10) ?? stringValue(row.receivedAt)?.slice(0, 10),
     durationMinutes: durationMinutes(data.duration_time),
     receivedAt: stringValue(row.receivedAt)
   };
+}
+
+function technicianShiftHourBreakdown(shifts: PayrollShiftRow[]): Array<{ technician: string; hours: number }> {
+  const minutesByEmployee = new Map<string, number>();
+  for (const shift of shifts) {
+    const employeeId = shift.employeeId ?? "unknown";
+    minutesByEmployee.set(employeeId, (minutesByEmployee.get(employeeId) ?? 0) + (shift.durationMinutes ?? 0));
+  }
+
+  return [...minutesByEmployee.entries()]
+    .map(([employeeId, minutes]) => ({
+      technician: SWEEPGO_EMPLOYEE_NAMES[employeeId] ?? "Unknown technician",
+      hours: roundMoney(minutes / 60)
+    }))
+    .sort((left, right) => right.hours - left.hours || left.technician.localeCompare(right.technician));
 }
 
 function dedupePayrollShifts(shifts: PayrollShiftRow[]): PayrollShiftRow[] {
@@ -1119,6 +1146,13 @@ function percentage(part: number, total: number): number | null {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function identifierValue(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return stringValue(value);
 }
 
 function isoString(value: unknown): string | undefined {

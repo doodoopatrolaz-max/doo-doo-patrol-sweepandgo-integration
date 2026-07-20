@@ -153,12 +153,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       averageRevenuePerHour,
       averageRevenuePerHourReason: averageRevenuePerHour === null
         ? (revenuePerHourMetrics.unavailableReason ?? "Revenue Per Recurring Service Hour unavailable until stored Sweep&Go completed job rows include recurring service revenue and duration.")
-        : "Recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded.",
+        : "Recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring service time. Initial and one-time cleanups are excluded.",
       revenuePerHourMetrics,
       averageRevenuePerShiftHour,
       averageRevenuePerShiftHourReason: averageRevenuePerShiftHour === null
         ? (revenuePerShiftHourMetrics.unavailableReason ?? "Revenue Per Recurring Shift Hour unavailable until stored Sweep&Go payroll shift rows include usable shift duration.")
-        : "Recurring completed job revenue divided by recorded shift hours after removing initial and one-time cleanup job time. Includes route, drive, break, and admin time for normal recurring work.",
+        : "Recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring shift hours. Initial and one-time cleanup time is removed.",
       revenuePerShiftHourMetrics,
       priorPeriodLeadConversions,
       netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
@@ -867,6 +867,11 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
         initialCleanupHoursExcluded: 0,
         oneTimeCleanupHoursExcluded: 0,
         customNonRecurringHoursExcluded: 0,
+        completedRecurringRevenue: 0,
+        skippedRecurringRevenue: 0,
+        skippedRecurringJobs: 0,
+        skippedRecurringMissingPriceRows: 0,
+        missedCanceledDispatchedRowsExcluded: 0,
         serviceRevenue: 0,
         serviceHours: 0,
         completedJobs: 0,
@@ -1020,12 +1025,12 @@ function dataNotes(input: {
   if (input.revenuePerHourMetrics.status !== "available") {
     notes.push(input.revenuePerHourMetrics.unavailableReason ?? "Revenue Per Recurring Service Hour is unavailable until stored Sweep&Go completed job rows include recurring service revenue and duration.");
   } else {
-    notes.push("Revenue Per Recurring Service Hour uses recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded.");
+    notes.push("Revenue Per Recurring Service Hour uses recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring service time. Initial, one-time, custom, missed, canceled, dispatched, and missing-price jobs are excluded.");
   }
   if (input.revenuePerShiftHourMetrics.status !== "available") {
     notes.push(input.revenuePerShiftHourMetrics.unavailableReason ?? "Revenue Per Recurring Shift Hour is unavailable until stored Sweep&Go payroll shift rows include usable shift duration.");
   } else {
-    notes.push("Revenue Per Recurring Shift Hour uses recurring completed job revenue divided by deduped Sweep&Go shift hours after subtracting initial, one-time, and custom cleanup job time.");
+    notes.push("Revenue Per Recurring Shift Hour uses recurring earned revenue, including paid skipped recurring jobs, divided by deduped Sweep&Go shift hours after subtracting initial, one-time, and custom cleanup job time.");
   }
   notes.push("Initial and one-time cleanup jobs are excluded from recurring productivity.");
   if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {

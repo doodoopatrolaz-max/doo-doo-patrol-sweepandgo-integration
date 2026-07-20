@@ -36,7 +36,8 @@ const INITIAL_PATTERN = /\binitial\b|initial cleanup|initial clean|first cleanup
 const ONE_TIME_PATTERN = /\bone[_ -]?time\b|one time cleanup|one-time cleanup|single cleanup|single clean/i;
 const CUSTOM_NON_RECURRING_PATTERN = /\bcustom\b|non[_ -]?recurring|special cleanup|manual cleanup|standalone cleanup/i;
 const RECURRING_PATTERN = /\brecurring\b|reoccurring|weekly|bi-weekly|biweekly|monthly|regular plan|fresh poo|vipoo|king poo|spray|deodorizer|deodoriser|sanitize|sanitizer|doo doo destroyer/i;
-const INVALID_STATUS_PATTERN = /\b(skip|skipped|missed|canceled|cancelled|incomplete)\b/i;
+const HARD_EXCLUDED_STATUS_PATTERN = /\b(missed|canceled|cancelled|incomplete|dispatched)\b/i;
+const SKIPPED_STATUS_PATTERN = /\b(skip|skipped)\b/i;
 const ROUTE_BOUNDARY_PATTERN = /^(start|finish|end)$/i;
 
 export function calculateCompletedJobRevenueMetrics(
@@ -75,8 +76,13 @@ function calculateParsedCompletedJobRevenueMetrics(
   parsedJobs: ParsedCompletedJob[],
   _range: DashboardDateRange
 ): DashboardRevenuePerHourMetrics {
-  const completedJobs = parsedJobs.filter((job) => !isExcludedJob(job));
-  const missingPriceRows = completedJobs.filter((job) => isRecurringJob(job) && job.price === undefined).length;
+  const hardExcludedJobs = parsedJobs.filter(isHardExcludedJob);
+  const productivityCandidates = parsedJobs.filter((job) => !isHardExcludedJob(job));
+  const completedJobs = productivityCandidates.filter(isCompletedJob);
+  const skippedJobs = productivityCandidates.filter(isSkippedJob);
+  const completedMissingPriceRows = completedJobs.filter((job) => isRecurringJob(job) && job.price === undefined).length;
+  const skippedRecurringMissingPriceRows = skippedJobs.filter((job) => isRecurringJob(job) && job.price === undefined).length;
+  const missingPriceRows = completedMissingPriceRows + skippedRecurringMissingPriceRows;
   const initialCleanupJobs = completedJobs.filter(isInitialCleanupJob);
   const oneTimeCleanupJobs = completedJobs.filter(isOneTimeCleanupJob);
   const customNonRecurringJobs = completedJobs.filter(isCustomNonRecurringJob);
@@ -86,25 +92,29 @@ function calculateParsedCompletedJobRevenueMetrics(
       && !isOneTimeCleanupJob(job)
       && !isCustomNonRecurringJob(job)
   );
-  const recurringJobs = completedJobs.filter((job) => isRecurringJob(job) && job.price !== undefined);
-  const stopGroups = groupJobsByStop(recurringJobs);
-  const timedCompletedJobs = recurringJobs.filter((job) => (job.durationMinutes ?? 0) > 0);
-  const serviceRevenue = recurringJobs.reduce((sum, job) => sum + (job.price ?? 0), 0);
+  const recurringCompletedJobs = completedJobs.filter((job) => isRecurringJob(job) && job.price !== undefined);
+  const skippedRecurringJobs = skippedJobs.filter((job) => isRecurringJob(job) && job.price !== undefined);
+  const recurringRevenueJobs = [...recurringCompletedJobs, ...skippedRecurringJobs];
+  const stopGroups = groupJobsByStop(recurringCompletedJobs);
+  const timedCompletedJobs = recurringCompletedJobs.filter((job) => (job.durationMinutes ?? 0) > 0);
+  const completedRecurringRevenue = recurringCompletedJobs.reduce((sum, job) => sum + (job.price ?? 0), 0);
+  const skippedRecurringRevenue = skippedRecurringJobs.reduce((sum, job) => sum + (job.price ?? 0), 0);
+  const serviceRevenue = completedRecurringRevenue + skippedRecurringRevenue;
   const serviceMinutes = timedCompletedJobs.reduce((sum, job) => sum + (job.durationMinutes ?? 0), 0);
   const serviceHours = serviceMinutes / 60;
-  const completedStopKeys = new Set(recurringJobs.map(stopGroupKey));
+  const completedStopKeys = new Set(recurringCompletedJobs.map(stopGroupKey));
   const scoopSprayCombinedStopGroups = [...stopGroups.values()].filter((jobs) =>
     jobs.some((job) => job.isSpray) && jobs.some((job) => !job.isSpray && !job.isInitial)
   ).length;
-  const zeroDurationRows = recurringJobs.filter((job) => (job.durationMinutes ?? 0) <= 0);
+  const zeroDurationRows = recurringCompletedJobs.filter((job) => (job.durationMinutes ?? 0) <= 0);
   const zeroDurationRowsAttachedToValidStop = zeroDurationRows.filter((job) =>
     stopGroups.get(stopGroupKey(job))?.some((groupJob) => (groupJob.durationMinutes ?? 0) > 0)
   ).length;
   const zeroDurationRowsExcluded = 0;
-  const sprayRevenue = recurringJobs
+  const sprayRevenue = recurringRevenueJobs
     .filter((job) => job.isSpray)
     .reduce((sum, job) => sum + (job.price ?? 0), 0);
-  const scoopingRevenue = recurringJobs
+  const scoopingRevenue = recurringRevenueJobs
     .filter((job) => !job.isSpray && !job.isInitial)
     .reduce((sum, job) => sum + (job.price ?? 0), 0);
   const initialCleanupHoursExcluded = serviceHoursFor(initialCleanupJobs);
@@ -116,8 +126,8 @@ function calculateParsedCompletedJobRevenueMetrics(
 
   return {
     rawCompletedJobRows: parsedJobs.length,
-    eligibleRows: recurringJobs.length,
-    excludedRows: parsedJobs.length - completedJobs.length,
+    eligibleRows: recurringRevenueJobs.length,
+    excludedRows: hardExcludedJobs.length,
     sameStopGroupsCreated: completedStopKeys.size,
     scoopSprayCombinedStopGroups,
     zeroDurationRows: zeroDurationRows.length,
@@ -133,11 +143,16 @@ function calculateParsedCompletedJobRevenueMetrics(
     initialCleanupHoursExcluded: roundMoney(initialCleanupHoursExcluded),
     oneTimeCleanupHoursExcluded: roundMoney(oneTimeCleanupHoursExcluded),
     customNonRecurringHoursExcluded: roundMoney(customNonRecurringHoursExcluded),
+    completedRecurringRevenue: roundMoney(completedRecurringRevenue),
+    skippedRecurringRevenue: roundMoney(skippedRecurringRevenue),
+    skippedRecurringJobs: skippedRecurringJobs.length,
+    skippedRecurringMissingPriceRows,
+    missedCanceledDispatchedRowsExcluded: hardExcludedJobs.length,
     serviceRevenue: roundMoney(serviceRevenue),
     serviceHours: roundMoney(serviceHours),
-    completedJobs: recurringJobs.length,
+    completedJobs: recurringCompletedJobs.length,
     completedStops: completedStopKeys.size,
-    pricedCompletedJobs: recurringJobs.length,
+    pricedCompletedJobs: recurringCompletedJobs.length,
     timedCompletedJobs: timedCompletedJobs.length,
     zeroDurationRevenueJobs: zeroDurationRows.length,
     scoopingRevenue: roundMoney(scoopingRevenue),
@@ -177,6 +192,14 @@ function isCustomNonRecurringJob(job: ParsedCompletedJob): boolean {
 
 function serviceHoursFor(jobs: ParsedCompletedJob[]): number {
   return jobs.reduce((sum, job) => sum + Math.max(0, job.durationMinutes ?? 0), 0) / 60;
+}
+
+function isCompletedJob(job: ParsedCompletedJob): boolean {
+  return job.status === "completed" && !SKIPPED_STATUS_PATTERN.test(job.type);
+}
+
+function isSkippedJob(job: ParsedCompletedJob): boolean {
+  return SKIPPED_STATUS_PATTERN.test(job.status) || SKIPPED_STATUS_PATTERN.test(job.type);
 }
 
 function groupJobsByStop(jobs: ParsedCompletedJob[]): Map<string, ParsedCompletedJob[]> {
@@ -224,11 +247,11 @@ function parseCompletedJob(row: CompletedJobRevenueInputRow): ParsedCompletedJob
   };
 }
 
-function isExcludedJob(job: ParsedCompletedJob): boolean {
+function isHardExcludedJob(job: ParsedCompletedJob): boolean {
   return job.isBoundary
-    || INVALID_STATUS_PATTERN.test(job.status)
-    || INVALID_STATUS_PATTERN.test(job.type)
-    || job.status !== "completed";
+    || HARD_EXCLUDED_STATUS_PATTERN.test(job.status)
+    || HARD_EXCLUDED_STATUS_PATTERN.test(job.type)
+    || (!isCompletedJob(job) && !isSkippedJob(job));
 }
 
 function routeDateFor(data: Record<string, unknown>, receivedAt: unknown): string | undefined {

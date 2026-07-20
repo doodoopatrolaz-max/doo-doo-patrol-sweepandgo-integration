@@ -105,6 +105,11 @@ export type DashboardRevenuePerHourMetrics = {
   initialCleanupHoursExcluded: number;
   oneTimeCleanupHoursExcluded: number;
   customNonRecurringHoursExcluded: number;
+  completedRecurringRevenue: number;
+  skippedRecurringRevenue: number;
+  skippedRecurringJobs: number;
+  skippedRecurringMissingPriceRows: number;
+  missedCanceledDispatchedRowsExcluded: number;
   serviceRevenue: number;
   serviceHours: number;
   completedJobs: number;

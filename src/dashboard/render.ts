@@ -209,6 +209,7 @@ function renderServiceProductivity(summary: DashboardSummary): string {
           ["Avg min / recurring stop", metrics.averageMinutesPerStop === null ? "No data" : String(metrics.averageMinutesPerStop)],
           ["Recurring scooping revenue", money(metrics.scoopingRevenue)],
           ["Recurring spray revenue", money(metrics.sprayRevenue)],
+          ["Skipped recurring revenue included", money(metrics.skippedRecurringRevenue)],
           ["Same-stop scoop/spray", String(metrics.scoopSprayCombinedStopGroups)]
         ].map(([label, value]) => `
           <div>
@@ -217,7 +218,7 @@ function renderServiceProductivity(summary: DashboardSummary): string {
           </div>
         `).join("")}
       </div>
-      <p class="panel-note">Initial and one-time cleanup jobs are excluded from recurring productivity.</p>
+      <p class="panel-note">Initial and one-time cleanup jobs are excluded from recurring productivity. Paid skipped recurring jobs count as revenue only.</p>
     </div>
   `;
 }

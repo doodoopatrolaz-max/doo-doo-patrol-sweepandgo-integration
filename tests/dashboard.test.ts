@@ -328,6 +328,11 @@ const summaryOnlyDataSource: DashboardDataSource = {
         initialCleanupHoursExcluded: 0,
         oneTimeCleanupHoursExcluded: 0,
         customNonRecurringHoursExcluded: 0,
+        completedRecurringRevenue: 0,
+        skippedRecurringRevenue: 0,
+        skippedRecurringJobs: 0,
+        skippedRecurringMissingPriceRows: 0,
+        missedCanceledDispatchedRowsExcluded: 0,
         serviceRevenue: 0,
         serviceHours: 0,
         completedJobs: 0,
@@ -467,10 +472,13 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.churnRate, 5);
     assert.equal(summary.churnRateDenominator, 20);
     assert.equal(summary.lifetimeValue, 1900);
-    assert.equal(summary.averageRevenuePerHour, 160);
-    assert.equal(summary.averageRevenuePerHourReason, "Recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded.");
-    assert(summary.dataNotes.includes("Revenue Per Recurring Service Hour uses recurring completed job revenue divided by adjusted recurring service time. Initial, one-time, custom, skipped, missed, canceled, and missing-price jobs are excluded."));
-    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
+    assert.equal(summary.averageRevenuePerHour, 260);
+    assert.equal(summary.averageRevenuePerHourReason, "Recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring service time. Initial and one-time cleanups are excluded.");
+    assert(summary.dataNotes.includes("Revenue Per Recurring Service Hour uses recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring service time. Initial, one-time, custom, missed, canceled, dispatched, and missing-price jobs are excluded."));
+    assert.equal(summary.revenuePerHourMetrics.completedRecurringRevenue, 80);
+    assert.equal(summary.revenuePerHourMetrics.skippedRecurringRevenue, 50);
+    assert.equal(summary.revenuePerHourMetrics.skippedRecurringJobs, 1);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 130);
     assert.equal(summary.revenuePerHourMetrics.serviceHours, 0.5);
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
     assert.equal(summary.revenuePerHourMetrics.sprayRevenue, 20);
@@ -789,25 +797,35 @@ describe("dashboard KPI aggregation", () => {
     const metrics = calculateCompletedJobRevenueMetrics([
       completedJobRow({ client_id: "same-yard", price: "60.00", duration: "00:30", type: "recurring" }),
       completedJobRow({ client_id: "same-yard", price: "20.00", duration: "00:00", pricing_plan_name: "Fresh Poo" }),
-      completedJobRow({ client_id: "skipped-yard", price: "50.00", duration: "00:10", status_name: "skipped" }),
+      completedJobRow({ client_id: "skipped-yard", price: "50.00", duration: "00:10", status_name: "skipped", type: "recurring" }),
+      completedJobRow({ client_id: "skipped-spray-yard", price: "10.00", duration: "00:00", status_name: "skipped", pricing_plan_name: "Fresh Poo" }),
+      completedJobRow({ client_id: "skipped-missing-price-yard", duration: "00:10", status_name: "skipped", type: "recurring" }),
       completedJobRow({ client_id: "missed-yard", price: "50.00", duration: "00:10", status_name: "missed" }),
+      completedJobRow({ client_id: "canceled-yard", price: "50.00", duration: "00:10", status_name: "canceled" }),
+      completedJobRow({ client_id: "dispatched-yard", price: "50.00", duration: "00:10", status_name: "dispatched" }),
       completedJobRow({ client_id: "free-initial", price: "0.00", duration: "01:00", type: "initial" }),
       completedJobRow({ client_id: "one-time-yard", price: "120.00", duration: "00:45", type: "one_time" }),
       completedJobRow({ client_id: "custom-yard", price: "40.00", duration: "00:15", type: "custom" })
     ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
 
     assert.equal(metrics.status, "available");
-    assert.equal(metrics.serviceRevenue, 80);
+    assert.equal(metrics.completedRecurringRevenue, 80);
+    assert.equal(metrics.skippedRecurringRevenue, 60);
+    assert.equal(metrics.serviceRevenue, 140);
     assert.equal(metrics.serviceHours, 0.5);
     assert.equal(metrics.completedStops, 1);
     assert.equal(metrics.completedJobs, 2);
-    assert.equal(metrics.rawCompletedJobRows, 7);
-    assert.equal(metrics.eligibleRows, 2);
-    assert.equal(metrics.excludedRows, 2);
+    assert.equal(metrics.rawCompletedJobRows, 11);
+    assert.equal(metrics.eligibleRows, 4);
+    assert.equal(metrics.excludedRows, 3);
+    assert.equal(metrics.missedCanceledDispatchedRowsExcluded, 3);
     assert.equal(metrics.nonRecurringRowsExcluded, 3);
     assert.equal(metrics.initialCleanupRowsExcluded, 1);
     assert.equal(metrics.oneTimeCleanupRowsExcluded, 1);
     assert.equal(metrics.customNonRecurringRowsExcluded, 1);
+    assert.equal(metrics.missingPriceRows, 1);
+    assert.equal(metrics.skippedRecurringMissingPriceRows, 1);
+    assert.equal(metrics.skippedRecurringJobs, 2);
     assert.equal(metrics.initialCleanupHoursExcluded, 1);
     assert.equal(metrics.oneTimeCleanupHoursExcluded, 0.75);
     assert.equal(metrics.customNonRecurringHoursExcluded, 0.25);
@@ -819,9 +837,9 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(metrics.zeroDurationRows, 1);
     assert.equal(metrics.zeroDurationRowsAttachedToValidStop, 1);
     assert.equal(metrics.zeroDurationRowsExcluded, 0);
-    assert.equal(metrics.scoopingRevenue, 60);
-    assert.equal(metrics.sprayRevenue, 20);
-    assert.equal(metrics.revenuePerStop, 80);
+    assert.equal(metrics.scoopingRevenue, 110);
+    assert.equal(metrics.sprayRevenue, 30);
+    assert.equal(metrics.revenuePerStop, 140);
     assert.equal(metrics.averageMinutesPerStop, 30);
   });
 
@@ -846,8 +864,11 @@ describe("dashboard KPI aggregation", () => {
     const summary = await new PostgresDashboardDataSource(pool)
       .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
 
-    assert.equal(summary.averageRevenuePerHour, 160);
-    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
+    assert.equal(summary.averageRevenuePerHour, 260);
+    assert.equal(summary.revenuePerHourMetrics.completedRecurringRevenue, 80);
+    assert.equal(summary.revenuePerHourMetrics.skippedRecurringRevenue, 50);
+    assert.equal(summary.revenuePerHourMetrics.skippedRecurringJobs, 1);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 130);
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
     assert.equal(summary.revenuePerHourMetrics.sprayRevenue, 20);
     assert.equal(summary.averageRevenuePerShiftHour, null);
@@ -869,12 +890,30 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(metrics.unavailableReason, "Stored completed job rows did not include usable positive service duration.");
   });
 
+  it("includes skipped recurring revenue without creating service time or completed stops", () => {
+    const metrics = calculateCompletedJobRevenueMetrics([
+      completedJobRow({ client_id: "skipped-yard", price: "50.00", duration: "00:20", type: "recurring", status_name: "skipped" }),
+      completedJobRow({ client_id: "skipped-spray-yard", price: "10.00", duration: "00:00", pricing_plan_name: "Fresh Poo", status_name: "skipped" })
+    ], parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
+
+    assert.equal(metrics.status, "unavailable");
+    assert.equal(metrics.completedRecurringRevenue, 0);
+    assert.equal(metrics.skippedRecurringRevenue, 60);
+    assert.equal(metrics.serviceRevenue, 60);
+    assert.equal(metrics.serviceHours, 0);
+    assert.equal(metrics.completedStops, 0);
+    assert.equal(metrics.completedJobs, 0);
+    assert.equal(metrics.revenuePerStop, null);
+    assert.equal(metrics.averageMinutesPerStop, null);
+    assert.equal(metrics.unavailableReason, "Stored completed job rows did not include usable positive service duration.");
+  });
+
   it("calculates average revenue per shift hour from deduped payroll shift rows", async () => {
     const summary = await new PostgresDashboardDataSource(new CompletedJobsWithShiftPool())
       .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-01", end: "2026-07-19" }));
     const html = renderDashboard(dashboardData(summary));
 
-    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 80);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, 130);
     assert.equal(summary.revenuePerShiftHourMetrics.rawShiftRows, 3);
     assert.equal(summary.revenuePerShiftHourMetrics.dedupedShiftRows, 2);
     assert.equal(summary.revenuePerShiftHourMetrics.duplicateShiftRowsExcluded, 1);
@@ -884,11 +923,13 @@ describe("dashboard KPI aggregation", () => {
     ]);
     assert.equal(summary.revenuePerShiftHourMetrics.shiftHours, 3.5);
     assert.equal(summary.revenuePerShiftHourMetrics.unadjustedShiftHours, 3.5);
-    assert.equal(summary.averageRevenuePerShiftHour, 22.86);
-    assert.equal(summary.averageRevenuePerShiftHourReason, "Recurring completed job revenue divided by recorded shift hours after removing initial and one-time cleanup job time. Includes route, drive, break, and admin time for normal recurring work.");
-    assert(summary.dataNotes.includes("Revenue Per Recurring Shift Hour uses recurring completed job revenue divided by deduped Sweep&Go shift hours after subtracting initial, one-time, and custom cleanup job time."));
+    assert.equal(summary.averageRevenuePerShiftHour, 37.14);
+    assert.equal(summary.averageRevenuePerShiftHourReason, "Recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring shift hours. Initial and one-time cleanup time is removed.");
+    assert(summary.dataNotes.includes("Revenue Per Recurring Shift Hour uses recurring earned revenue, including paid skipped recurring jobs, divided by deduped Sweep&Go shift hours after subtracting initial, one-time, and custom cleanup job time."));
     assert(html.includes("Revenue Per Recurring Shift Hour"));
     assert(html.includes("Recurring Route Productivity"));
+    assert(html.includes("Skipped recurring revenue included"));
+    assert(html.includes("Paid skipped recurring jobs count as revenue only."));
   });
 
   it("subtracts non-recurring cleanup duration from recurring shift-hour productivity", async () => {

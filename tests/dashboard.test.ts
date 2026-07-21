@@ -496,6 +496,7 @@ describe("dashboard KPI aggregation", () => {
     assert(!summary.dataNotes.some((note) => note.includes("Google Ads is not connected yet")));
     const leadQueries = pool.queries.filter((query) => query.sql.includes("FROM opportunities"));
     assert(leadQueries.some((query) => query.sql.includes("reporting_exclusions")));
+    assert(leadQueries.every((query) => query.sql.includes("AT TIME ZONE 'America/Phoenix'")));
     assert(leadQueries.every((query) => !query.sql.includes("ILIKE")));
   });
 

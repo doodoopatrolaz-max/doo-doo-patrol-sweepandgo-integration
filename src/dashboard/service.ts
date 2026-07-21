@@ -23,6 +23,7 @@ type Queryable = {
 
 const SOURCES: DashboardSourceRow["source"][] = ["facebook", "website", "other", "unknown"];
 const DASHBOARD_LEAD_EXCLUSION_METRICS = "ARRAY['lead_denominator', 'dashboard_leads']";
+const DASHBOARD_REPORTING_TIME_ZONE = "America/Phoenix";
 export const TEMP_AVERAGE_MONTHLY_TICKET = 95;
 const SWEEPGO_EMPLOYEE_NAMES: Record<string, string> = {
   "5501": "Bryan Long",
@@ -195,16 +196,16 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         [range.startDate, range.endDate]
       ),
       this.pool.query(
-        `SELECT original_lead_date::date::text AS date,
+        `SELECT ${leadReportingDateSql("o.original_lead_date")}::text AS date,
                 COUNT(*) FILTER (WHERE original_lead_source = 'facebook')::int AS facebook_leads,
                 COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads,
                 COUNT(*)::int AS total_leads
          FROM opportunities o
-         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+         WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND original_lead_source IN ('facebook', 'website', 'other', 'unknown')
            AND ${reportingLeadExclusionSql("o")}
-         GROUP BY original_lead_date::date
-         ORDER BY original_lead_date::date`,
+         GROUP BY ${leadReportingDateSql("o.original_lead_date")}
+         ORDER BY ${leadReportingDateSql("o.original_lead_date")}`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
@@ -252,7 +253,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.pool.query(
         `SELECT original_lead_source AS source, COUNT(*)::int AS count
          FROM opportunities o
-         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+         WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND ${reportingLeadExclusionSql("o")}
          GROUP BY o.original_lead_source`,
         [range.startDate, range.endDate]
@@ -281,7 +282,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.pool.query(
         `SELECT COUNT(*)::int AS count
          FROM opportunities o
-         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+         WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND o.original_lead_source IN ('facebook', 'website')
            AND o.contact_id IS NULL
            AND ${reportingLeadExclusionSql("o")}`,
@@ -429,7 +430,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const result = await this.pool.query(
       `SELECT original_lead_source AS source, COUNT(*)::int AS count
        FROM opportunities o
-       WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+       WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
          AND ${reportingLeadExclusionSql("o")}
        GROUP BY o.original_lead_source`,
       [range.startDate, range.endDate]
@@ -755,7 +756,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
            COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads,
            COUNT(*) FILTER (WHERE COALESCE(original_lead_source, 'unknown') NOT IN ('facebook', 'website'))::int AS other_unknown_leads
          FROM opportunities o
-         WHERE o.original_lead_date::date BETWEEN $1::date AND $2::date
+         WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       ),
@@ -810,6 +811,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
     };
   }
+}
+
+function leadReportingDateSql(column: string): string {
+  return `(${column} AT TIME ZONE '${DASHBOARD_REPORTING_TIME_ZONE}')::date`;
 }
 
 export class EmptyDashboardDataSource implements DashboardDataSource {

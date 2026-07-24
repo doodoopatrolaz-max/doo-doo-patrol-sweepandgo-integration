@@ -92,6 +92,11 @@ function renderSummary(summary: DashboardSummary): string {
       note: activeClientsNote
     },
     {
+      label: "One-Time Cleanups",
+      value: String(summary.oneTimeCleanups),
+      note: summary.oneTimeCleanupsReason
+    },
+    {
       label: "Total Leads",
       value: String(summary.totalLeads),
       breakdown: sourceBreakdownRows({

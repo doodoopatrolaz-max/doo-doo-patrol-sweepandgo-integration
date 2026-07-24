@@ -55,6 +55,9 @@ class FakePool {
     if (sql.includes("SUM(monthly_recurring_revenue)")) {
       return { rows: [{ count: 2, mrr_added: 60, priced_count: 2 }] };
     }
+    if (sql.includes("FROM onboarding_intakes oi")) {
+      return { rows: [{ one_time_cleanups: 2 }] };
+    }
     if (sql.includes("facebook_customers")) {
       return {
         rows: [{
@@ -281,6 +284,8 @@ const summaryOnlyDataSource: DashboardDataSource = {
       totalActiveClientsSource: "Sweep&Go BI customers where status is active and at least one recurring service is present.",
       totalActiveClientsAsOf: "2026-06-22T11:00:00.000Z",
       totalActiveClientsNeedsVerification: false,
+      oneTimeCleanups: 0,
+      oneTimeCleanupsReason: "One-time cleanup signups in the selected range. Separate from recurring active clients.",
       newRecurringCustomers: 0,
       newRecurringCustomerBreakdown: { facebook: 0, website: 0, other: 0, unknown: 0 },
       costPerLead: 10,
@@ -450,6 +455,8 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalActiveClients, 4);
     assert.equal(summary.totalActiveClientsNeedsVerification, false);
     assert.equal(summary.totalActiveClientsAsOf, "2026-06-22T11:00:00.000Z");
+    assert.equal(summary.oneTimeCleanups, 2);
+    assert.equal(summary.oneTimeCleanupsReason, "One-time cleanup signups in the selected range. Separate from recurring active clients.");
     assert.equal(summary.newRecurringCustomers, 2);
     assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 0, other: 0, unknown: 2 });
     assert.equal(summary.costPerLead, 25);
@@ -500,6 +507,32 @@ describe("dashboard KPI aggregation", () => {
     assert(leadQueries.every((query) => !query.sql.includes("ILIKE")));
   });
 
+  it("counts one-time cleanups separately without changing recurring KPIs", async () => {
+    class OneTimeCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM onboarding_intakes oi")) {
+          assert(sql.includes("COUNT(DISTINCT"));
+          assert(sql.includes("client:client_onboarding_onetime"));
+          assert(sql.includes("AT TIME ZONE 'America/Phoenix'"));
+          return { rows: [{ one_time_cleanups: 1 }] };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new OneTimeCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-24", end: "2026-07-24" }));
+
+    assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.totalActiveClients, 4);
+    assert.equal(summary.newRecurringCustomers, 2);
+    assert.equal(summary.churnRate, 0.4);
+    assert.equal(summary.netRecurringCustomerGrowth, 1);
+    assert.equal(summary.closeRateMetrics.totalMatchedConversions, 3);
+    assert.equal(summary.revenuePerHourMetrics.oneTimeCleanupRowsExcluded, 0);
+  });
+
   it("keeps lead exclusions explicit and migration-backed", () => {
     const migration = fs.readFileSync("migrations/008_create_reporting_exclusions.sql", "utf8");
 
@@ -518,6 +551,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalLeads, 0);
     assert.equal(summary.totalActiveClients, null);
     assert.equal(summary.totalActiveClientsNeedsVerification, true);
+    assert.equal(summary.oneTimeCleanups, 0);
     assert.equal(summary.costPerLead, null);
     assert.equal(summary.costPerNewRecurringCustomer, 0);
     assert.equal(summary.costPerNewRecurringCustomerStatus, "no_ad_spend");
@@ -534,7 +568,10 @@ describe("dashboard KPI aggregation", () => {
 
     assert(html.includes("Owner Scoreboard"));
     assert(html.indexOf("Total Active Clients") < html.indexOf("Total Leads"));
+    assert(html.indexOf("Total Active Clients") < html.indexOf("One-Time Cleanups"));
+    assert(html.indexOf("One-Time Cleanups") < html.indexOf("Total Leads"));
     assert(html.indexOf("Total Leads") < html.indexOf("New Recurring Customers"));
+    assert(html.includes("One-time cleanup signups in the selected range. Separate from recurring active clients."));
     assert(html.indexOf("New Recurring Customers") < html.indexOf("Close Rate"));
     assert(html.indexOf("Close Rate") < html.indexOf("Churn Rate"));
     assert(html.indexOf("Churn Rate") < html.indexOf("Average Monthly Ticket"));

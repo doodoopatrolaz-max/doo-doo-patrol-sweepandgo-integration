@@ -71,6 +71,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       leads,
       customers,
       activeCustomers,
+      oneTimeCleanups,
       cancellations,
       churnDenominator,
       revenuePerHourMetrics,
@@ -81,6 +82,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.leadsBySource(range),
       this.newRecurringCustomers(range),
       this.activeRecurringCustomers(),
+      this.oneTimeCleanups(range),
       this.cancellations(range),
       this.activeCustomersAtRangeStart(range),
       this.revenuePerHourMetrics(range),
@@ -129,6 +131,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       totalActiveClientsSource: activeCustomers.source,
       totalActiveClientsAsOf: activeCustomers.asOf,
       totalActiveClientsNeedsVerification: activeCustomers.needsVerification,
+      oneTimeCleanups,
+      oneTimeCleanupsReason: "One-time cleanup signups in the selected range. Separate from recurring active clients.",
       newRecurringCustomers,
       newRecurringCustomerBreakdown: recurringBreakdown,
       costPerLead: totalLeads > 0 ? roundMoney(totalAdSpend / totalLeads) : null,
@@ -457,6 +461,25 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       mrrAdded: pricedCount > 0 ? mrrAdded : null,
       bySource
     };
+  }
+
+  private async oneTimeCleanups(range: DashboardDateRange): Promise<number> {
+    const result = await this.pool.query(
+      `SELECT COUNT(DISTINCT (
+                ((COALESCE(we.received_at, oi.created_at) AT TIME ZONE 'America/Phoenix')::date::text)
+                || CHR(124)
+                || COALESCE(NULLIF(oi.client_identifier, ''), oi.trigger_event_fingerprint)
+              ))::int AS one_time_cleanups
+       FROM onboarding_intakes oi
+       LEFT JOIN webhook_events we ON we.id = oi.webhook_event_id
+       WHERE (COALESCE(we.received_at, oi.created_at) AT TIME ZONE 'America/Phoenix')::date BETWEEN $1::date AND $2::date
+         AND (
+           oi.event_type = 'client:client_onboarding_onetime'
+           OR oi.service_type ILIKE '%one%time%'
+         )`,
+      [range.startDate, range.endDate]
+    );
+    return integerValue(result.rows[0]?.one_time_cleanups);
   }
 
   private async activeRecurringCustomers(): Promise<{
@@ -833,6 +856,8 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       totalActiveClients: null,
       totalActiveClientsSource: "No database connection is configured.",
       totalActiveClientsNeedsVerification: true,
+      oneTimeCleanups: 0,
+      oneTimeCleanupsReason: "One-time cleanup signups unavailable because no database connection is configured.",
       newRecurringCustomers: 0,
       newRecurringCustomerBreakdown: emptySourceBreakdown(),
       costPerLead: null,

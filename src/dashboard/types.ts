@@ -15,6 +15,8 @@ export type DashboardSummary = {
   totalActiveClientsSource: string;
   totalActiveClientsAsOf?: string;
   totalActiveClientsNeedsVerification: boolean;
+  oneTimeCleanups: number;
+  oneTimeCleanupsReason: string;
   newRecurringCustomers: number;
   newRecurringCustomerBreakdown: DashboardSourceBreakdown;
   costPerLead: number | null;

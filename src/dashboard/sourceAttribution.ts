@@ -180,7 +180,7 @@ function hasGoogleSearchOnlyProof(flattened: EvidenceEntry[]): boolean {
   const detail = firstStringField(flattened, ["how_heard_about_us_details", "how_heard_details", "source_detail", "source_details"]);
   const combined = flattened.map((entry) => entry.value.toLowerCase()).join(" ");
   return (
-    Boolean(answer && /\b(search engine|search|google search)\b/.test(answer) && (!detail || /\bgoogle\b/.test(detail))) ||
+    Boolean(answer && /\b(search engine|google search)\b/.test(answer) && detail && /\bgoogle\b/.test(detail)) ||
     /\bsearch engine\b/.test(combined) && /\bgoogle\b/.test(combined)
   );
 }

@@ -29,6 +29,21 @@ export function normalizeExplicitCustomerSource(record: unknown): SourceNormaliz
   }
 
   const input = record as Record<string, unknown>;
+  const howHeardAnswer = stringValue(input.how_heard_answer ?? input.how_heard_about_us ?? input.how_you_heard_about_us);
+  const howHeardDetails = stringValue(
+    input.how_heard_about_us_details ??
+    input.how_heard_details ??
+    input.how_you_heard_about_us_details ??
+    input.source_details
+  );
+  if (isSearchEngineGooglePair(howHeardAnswer, howHeardDetails)) {
+    return {
+      normalizedSource: "website",
+      rawSource: "Search Engine / Google",
+      evidenceField: "how_heard_answer+how_heard_about_us_details"
+    };
+  }
+
   const candidates: Array<[string, unknown]> = [
     ["lead_source", input.lead_source],
     ["original_source", input.original_source],
@@ -91,6 +106,25 @@ function normalizeExplicitSourceText(value: string): NormalizedCustomerSource {
   }
 
   return "other";
+}
+
+function isSearchEngineGooglePair(answer: string | undefined, detail: string | undefined): boolean {
+  return Boolean(
+    answer &&
+    detail &&
+    /\b(search engine|google search)\b/i.test(answer) &&
+    /\bgoogle\b/i.test(detail)
+  );
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
 }
 
 function parseTrackingParams(value: string): URLSearchParams {

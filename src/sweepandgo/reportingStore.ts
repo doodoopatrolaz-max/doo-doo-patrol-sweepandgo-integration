@@ -178,6 +178,7 @@ export class SweepAndGoReportingStore {
           subscriptionNames: record.subscriptionNames,
           serviceDays: record.serviceDays,
           sourceEvidenceField: record.sourceEvidenceField,
+          sourceDetail: record.sourceDetail,
           currentAccountBalanceUnavailableFromSweepAndGo: record.currentAccountBalance === undefined
         })
       ]
@@ -233,7 +234,11 @@ export class SweepAndGoReportingStore {
           customerResult.rows[0].id,
           record.source,
           record.sourceRaw ?? null,
-          JSON.stringify({ field: record.sourceEvidenceField })
+          JSON.stringify({
+            field: record.sourceEvidenceField,
+            source_raw: record.sourceRaw,
+            sourceDetail: record.sourceDetail
+          })
         ]
       );
     }

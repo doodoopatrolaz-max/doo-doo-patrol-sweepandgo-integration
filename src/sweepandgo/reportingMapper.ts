@@ -17,6 +17,7 @@ export type SweepAndGoCustomerReportingRecord = {
   source: NormalizedCustomerSource;
   sourceRaw?: string;
   sourceEvidenceField?: string;
+  sourceDetail?: string;
   monthlyRecurringRevenue?: number;
   currentAccountBalance?: number;
   raw: Record<string, unknown>;
@@ -58,6 +59,14 @@ export function mapSweepAndGoCustomer(
   const hasActiveSubscription = status === "active" && listType !== "active_no_subscription" && Boolean(subscriptionNames);
   const serviceCadence = isOneTimeClient ? "one_time" : hasActiveSubscription ? "recurring" : "unknown";
   const source = normalizeExplicitCustomerSource(row);
+  const sourceDetail = stringValue(
+    row.how_heard_about_us_details ??
+    row.how_heard_details ??
+    row.how_you_heard_about_us_details ??
+    row.source_detail ??
+    row.sourceDetail ??
+    row.source_details
+  );
 
   return {
     externalCustomerId,
@@ -72,6 +81,7 @@ export function mapSweepAndGoCustomer(
     source: source.normalizedSource,
     sourceRaw: source.rawSource,
     sourceEvidenceField: source.evidenceField,
+    sourceDetail,
     monthlyRecurringRevenue: undefined,
     currentAccountBalance: undefined,
     raw: row

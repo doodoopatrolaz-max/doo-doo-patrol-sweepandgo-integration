@@ -44,6 +44,24 @@ describe("Sweep&Go reporting mapper", () => {
     assert.equal(mapped.source, "website");
     assert.equal(mapped.sourceRaw, "website");
     assert.equal(mapped.sourceEvidenceField, "lead_source");
+    assert.equal(mapped.sourceDetail, "direct_signup");
+  });
+
+  it("maps Search Engine plus Google source details from Sweep&Go customer rows", () => {
+    const mapped = mapSweepAndGoCustomer({
+      client: "rcl_SANITIZED_GOOGLE_SEARCH",
+      status: "active",
+      subscription_names: "Weekly",
+      cleanup_frequency: "weekly",
+      how_heard_answer: "Search Engine",
+      how_heard_about_us_details: "Google"
+    });
+
+    assert(mapped);
+    assert.equal(mapped.source, "website");
+    assert.equal(mapped.sourceRaw, "Search Engine / Google");
+    assert.equal(mapped.sourceEvidenceField, "how_heard_answer+how_heard_about_us_details");
+    assert.equal(mapped.sourceDetail, "Google");
   });
 
   it("does not count active clients without subscriptions as recurring customers", () => {
@@ -105,6 +123,15 @@ describe("Sweep&Go reporting mapper", () => {
     assert.equal(normalizeExplicitCustomerSource({
       how_heard_answer: "Facebook"
     }).normalizedSource, "facebook");
+
+    assert.deepEqual(normalizeExplicitCustomerSource({
+      how_heard_answer: "Search Engine",
+      how_heard_about_us_details: "Google"
+    }), {
+      normalizedSource: "website",
+      rawSource: "Search Engine / Google",
+      evidenceField: "how_heard_answer+how_heard_about_us_details"
+    });
 
     assert.equal(normalizeExplicitCustomerSource({
       how_heard_about_us: "referred_by_family_or_friend"

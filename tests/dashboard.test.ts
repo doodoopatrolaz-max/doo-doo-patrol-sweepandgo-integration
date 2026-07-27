@@ -566,12 +566,17 @@ describe("dashboard KPI aggregation", () => {
             rows: [{
               source: "unknown",
               source_raw: "unknown",
-              metadata: {
-                how_heard_answer: "Search Engine",
-                how_heard_about_us_details: "Google"
-              },
+              metadata: {},
               monthly_recurring_revenue: 95,
-              source_evidence: []
+              source_evidence: [{
+                source: "website",
+                source_raw: "Search Engine",
+                source_provider: "owner_confirmed_new_client_email",
+                evidence: {
+                  how_heard_answer: "Search Engine",
+                  how_heard_about_us_details: "Google"
+                }
+              }]
             }]
           };
         }

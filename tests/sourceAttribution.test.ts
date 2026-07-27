@@ -65,6 +65,13 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.bucket, "website_organic");
   });
 
+  it("does not treat Search Engine without Google detail as Website Paid", () => {
+    const result = classifyDashboardSource({ how_heard_answer: "Search Engine" });
+
+    assert.equal(result.bucket, "other_unknown");
+    assert.equal(result.googleSearchOnlyProof, false);
+  });
+
   it("preserves Facebook over website signals", () => {
     const result = classifyDashboardSource({ lead_source: "website", tags: ["facebook lead"] });
 

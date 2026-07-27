@@ -1336,22 +1336,6 @@ function hasDirectSignupSourceEvidence(row: Record<string, unknown>): boolean {
 }
 
 function oneTimeCleanupDedupeKey(row: Record<string, unknown>, cleanupDate: string): string {
-  const visitIdentifier = findFirstNestedString(row, [
-    "job_id",
-    "jobId",
-    "visit_id",
-    "visitId",
-    "booking_id",
-    "bookingId",
-    "appointment_id",
-    "appointmentId",
-    "service_id",
-    "serviceId"
-  ]);
-  if (visitIdentifier) {
-    return `${cleanupDate}|one_time|visit:${normalizeKeyPart(visitIdentifier)}`;
-  }
-
   const clientIdentifier = stringValue(row.client_identifier) ?? findFirstNestedString(row, [
     "client",
     "client_id",
@@ -1407,6 +1391,22 @@ function oneTimeCleanupDedupeKey(row: Record<string, unknown>, cleanupDate: stri
   ]));
   if (name && address) {
     return `${cleanupDate}|one_time|name_address:${name}|${address}`;
+  }
+
+  const visitIdentifier = findFirstNestedString(row, [
+    "job_id",
+    "jobId",
+    "visit_id",
+    "visitId",
+    "booking_id",
+    "bookingId",
+    "appointment_id",
+    "appointmentId",
+    "service_id",
+    "serviceId"
+  ]);
+  if (visitIdentifier) {
+    return `${cleanupDate}|one_time|visit:${normalizeKeyPart(visitIdentifier)}`;
   }
 
   return `${cleanupDate}|one_time|fingerprint:${normalizeKeyPart(stringValue(row.trigger_event_fingerprint) ?? "unknown")}`;

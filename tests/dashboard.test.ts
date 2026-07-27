@@ -683,7 +683,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 2);
   });
 
-  it("does not dedupe clearly separate same-day one-time visits with distinct visit IDs", async () => {
+  it("dedupes same-day one-time cleanup rows by customer identity before visit IDs", async () => {
     class DistinctVisitOneTimeCleanupPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
@@ -703,9 +703,9 @@ describe("dashboard KPI aggregation", () => {
       .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
 
     assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
-    assert.equal(summary.oneTimeCleanups, 2);
-    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 0);
-    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 2);
+    assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 1);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
   });
 
   it("maps a Search Engine plus Google new recurring customer to Website Paid without changing unrelated KPIs", async () => {

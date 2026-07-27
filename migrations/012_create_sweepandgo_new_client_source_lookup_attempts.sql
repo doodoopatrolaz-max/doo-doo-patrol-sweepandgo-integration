@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS sweepandgo_new_client_source_lookup_attempts (
   id BIGSERIAL PRIMARY KEY,
   provider TEXT NOT NULL DEFAULT 'sweepandgo',
-  webhook_event_id UUID REFERENCES webhook_events(id) ON DELETE SET NULL,
+  webhook_event_id BIGINT REFERENCES webhook_events(id) ON DELETE SET NULL,
   event_fingerprint TEXT NOT NULL,
   event_type TEXT NOT NULL,
   phoenix_business_date DATE NOT NULL,

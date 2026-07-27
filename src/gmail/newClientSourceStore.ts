@@ -99,7 +99,7 @@ export class PostgresNewClientSourceEmailStore {
           next_retry_after,
           metadata
        )
-       VALUES ($1::uuid, $2, $3, $4::date, $5, $6, 1, NOW(), $7::timestamptz, $8::jsonb)
+       VALUES ($1::bigint, $2, $3, $4::date, $5, $6, 1, NOW(), $7::timestamptz, $8::jsonb)
        ON CONFLICT (event_fingerprint)
        DO UPDATE SET status = EXCLUDED.status,
                      reason = EXCLUDED.reason,

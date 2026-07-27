@@ -708,6 +708,31 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
   });
 
+  it("dedupes same-day one-time cleanup rows by contact evidence before client IDs", async () => {
+    class SplitClientIdentifierCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              oneTimeCleanupIntakeRow({ fingerprint: "client-a", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage", clientIdentifier: "client-1", email: "cleanup@example.invalid" }),
+              oneTimeCleanupIntakeRow({ fingerprint: "client-b", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage", clientIdentifier: "client-2", email: "cleanup@example.invalid" })
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new SplitClientIdentifierCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+
+    assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
+    assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 1);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
+  });
+
   it("maps a Search Engine plus Google new recurring customer to Website Paid without changing unrelated KPIs", async () => {
     class GoogleSearchNewRecurringPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
@@ -1732,15 +1757,17 @@ function oneTimeCleanupIntakeRow(input: {
   address: string;
   source: string;
   visitId?: string;
+  clientIdentifier?: string;
+  email?: string;
   sparseIntake?: boolean;
 }) {
   return {
     cleanup_date: input.date ?? "2026-07-26",
     event_type: "client:client_onboarding_onetime",
     trigger_event_fingerprint: input.fingerprint,
-    customer_email: null,
+    customer_email: input.email ?? null,
     customer_name: input.sparseIntake ? null : input.name,
-    client_identifier: null,
+    client_identifier: input.clientIdentifier ?? null,
     service_type: "one-time",
     verified_details: input.sparseIntake ? {} : {
       customerName: { value: input.name },
@@ -1752,6 +1779,7 @@ function oneTimeCleanupIntakeRow(input: {
     webhook_payload: {
       data: {
         customer_name: input.name,
+        email: input.email,
         service_address: input.address,
         how_heard_answer: input.source
       }

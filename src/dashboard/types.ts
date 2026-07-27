@@ -81,6 +81,7 @@ export type DashboardCloseRateMetrics = {
   websiteMatchedConversions: number;
   totalMatchedConversions: number;
   manualReviewConversions: number;
+  directSignupReportingLeads: number;
   facebookPriorPeriodLeadConversions: number;
   websitePriorPeriodLeadConversions: number;
   totalPriorPeriodLeadConversions: number;

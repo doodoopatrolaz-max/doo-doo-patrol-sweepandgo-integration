@@ -208,7 +208,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getTrends(range: DashboardDateRange): Promise<DashboardTrendPoint[]> {
-    const [spendRows, leadRows, customerRows] = await Promise.all([
+    const [spendRows, leadRows, customerRows, directSignupLeadCredits] = await Promise.all([
       this.pool.query(
         `SELECT report_date::text AS date,
                 SUM(CASE WHEN platform = 'meta' THEN spend_amount ELSE 0 END)::float AS meta_spend,
@@ -240,7 +240,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          GROUP BY first_recurring_date
          ORDER BY first_recurring_date`,
         [range.startDate, range.endDate]
-      )
+      ),
+      this.directSignupLeadCreditsByDate(range)
     ]);
 
     const spendByDate = indexByDate(spendRows.rows);
@@ -250,11 +251,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     return enumerateDates(range.startDate, range.endDate).map((date) => {
       const spend = spendByDate.get(date) ?? {};
       const leads = leadsByDate.get(date) ?? {};
+      const directSignupLeads = directSignupLeadCredits.get(date);
       const customers = customersByDate.get(date) ?? {};
       const metaSpend = numberValue(spend.meta_spend);
       const googleSpend = numberValue(spend.google_spend);
       const totalSpend = metaSpend + googleSpend;
-      const totalLeads = integerValue(leads.total_leads);
+      const facebookLeads = integerValue(leads.facebook_leads) + (directSignupLeads?.legacy.facebook ?? 0);
+      const websiteLeads = integerValue(leads.website_leads) + (directSignupLeads?.legacy.website ?? 0);
+      const totalLeads = integerValue(leads.total_leads) + sumDetailed(directSignupLeads?.detailed);
       const newRecurringCustomers = integerValue(customers.new_recurring_customers);
 
       return {
@@ -262,8 +266,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         metaSpend: roundMoney(metaSpend),
         googleSpend: roundMoney(googleSpend),
         totalSpend: roundMoney(totalSpend),
-        facebookLeads: integerValue(leads.facebook_leads),
-        websiteLeads: integerValue(leads.website_leads),
+        facebookLeads,
+        websiteLeads,
         totalLeads,
         newRecurringCustomers,
         costPerLead: totalLeads > 0 ? roundMoney(totalSpend / totalLeads) : null,
@@ -273,7 +277,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getSources(range: DashboardDateRange): Promise<DashboardSources> {
-    const [leadRows, customerRows, campaignRows, unmatchedRows] = await Promise.all([
+    const [leadRows, directSignupLeadRows, customerRows, campaignRows, unmatchedRows] = await Promise.all([
       this.pool.query(
         `SELECT original_lead_source,
                 source,
@@ -285,6 +289,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       ),
+      this.directSignupLeadRows(range),
       this.pool.query(
         `SELECT c.source,
                 c.source_raw,
@@ -331,13 +336,16 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       )
     ]);
 
-    const leadCounts = rowsToSourceMetrics(leadRows.rows.map((row) => ({
+    const leadCounts = rowsToSourceMetrics([
+      ...leadRows.rows.map((row) => ({
       original_lead_source: row.original_lead_source,
       source: row.source,
       metadata: row.metadata,
       pipeline_name: row.pipeline_name,
       stage_name: row.stage_name
-    }))).detailed;
+      })),
+      ...directSignupLeadRows
+    ]).detailed;
     const customerCounts = rowsToSourceMetrics(customerRows.rows.map((row) => ({
       source: row.source,
       source_raw: row.source_raw,
@@ -479,7 +487,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async leadsBySource(range: DashboardDateRange): Promise<SourceMetrics> {
-    const result = await this.pool.query(
+    const [result, directSignupLeadRows] = await Promise.all([
+      this.pool.query(
       `SELECT original_lead_source,
               source,
               metadata,
@@ -489,14 +498,19 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
        WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
          AND ${reportingLeadExclusionSql("o")}`,
       [range.startDate, range.endDate]
-    );
-    return rowsToSourceMetrics(result.rows.map((row) => ({
+      ),
+      this.directSignupLeadRows(range)
+    ]);
+    return rowsToSourceMetrics([
+      ...result.rows.map((row) => ({
       original_lead_source: row.original_lead_source,
       source: row.source,
       metadata: row.metadata,
       pipeline_name: row.pipeline_name,
       stage_name: row.stage_name
-    })));
+      })),
+      ...directSignupLeadRows
+    ]);
   }
 
   private async newRecurringCustomers(range: DashboardDateRange): Promise<NewRecurringCustomerMetrics> {
@@ -847,7 +861,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
-    const [leadRows, customerRows, matchRows] = await Promise.all([
+    const [leadRows, directSignupLeadRows, customerRows, matchRows] = await Promise.all([
       this.pool.query(
         `SELECT original_lead_source,
                 source,
@@ -859,6 +873,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       ),
+      this.directSignupLeadRows(range),
       this.pool.query(
         `SELECT c.source,
                 c.source_raw,
@@ -896,13 +911,17 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         [range.startDate, range.endDate]
       )
     ]);
-    const leadBreakdown = rowsToSourceMetrics(leadRows.rows.map((row) => ({
+    const directSignupLeadBreakdown = rowsToSourceMetrics(directSignupLeadRows).detailed;
+    const leadBreakdown = rowsToSourceMetrics([
+      ...leadRows.rows.map((row) => ({
       original_lead_source: row.original_lead_source,
       source: row.source,
       metadata: row.metadata,
       pipeline_name: row.pipeline_name,
       stage_name: row.stage_name
-    }))).detailed;
+      })),
+      ...directSignupLeadRows
+    ]).detailed;
     const customerBreakdown = rowsToSourceMetrics(customerRows.rows.map((row) => ({
       source: row.source,
       source_raw: row.source_raw,
@@ -939,6 +958,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       websiteMatchedConversions,
       totalMatchedConversions,
       manualReviewConversions: integerValue(matchRow.manual_review),
+      directSignupReportingLeads: sumDetailed(directSignupLeadBreakdown),
       facebookPriorPeriodLeadConversions: integerValue(matchRow.facebook_prior_period),
       websitePriorPeriodLeadConversions: integerValue(matchRow.website_prior_period),
       totalPriorPeriodLeadConversions: integerValue(matchRow.total_prior_period),
@@ -949,6 +969,63 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       sourceBreakdown,
       costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
     };
+  }
+
+  private async directSignupLeadCreditsByDate(range: DashboardDateRange): Promise<Map<string, SourceMetrics>> {
+    const rows = await this.directSignupLeadRows(range);
+    const byDate = new Map<string, SourceMetrics>();
+    for (const row of rows) {
+      const date = stringValue(row.direct_signup_lead_date);
+      if (!date) {
+        continue;
+      }
+      const entry = byDate.get(date) ?? { legacy: emptySourceBreakdown(), detailed: emptyDetailedSourceBreakdown() };
+      const metrics = rowsToSourceMetrics([row]);
+      addSourceMetrics(entry, metrics);
+      byDate.set(date, entry);
+    }
+    return byDate;
+  }
+
+  private async directSignupLeadRows(range: DashboardDateRange): Promise<Array<Record<string, unknown>>> {
+    const result = await this.pool.query(
+      `SELECT /* direct_signup_reporting_leads */
+              c.first_recurring_date::text AS direct_signup_lead_date,
+              c.source,
+              c.source_raw,
+              c.metadata,
+              COALESCE(
+                jsonb_agg(
+                  jsonb_build_object(
+                    'source', cs.source,
+                    'source_raw', cs.source_raw,
+                    'source_provider', cs.source_provider,
+                    'evidence', cs.evidence
+                  )
+                ) FILTER (WHERE cs.id IS NOT NULL),
+                '[]'::jsonb
+              ) AS source_evidence
+       FROM customers c
+       LEFT JOIN customer_sources cs ON cs.customer_id = c.id
+       WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
+         AND NOT EXISTS (
+           SELECT 1
+           FROM
+             opportunities o
+           WHERE c.contact_id IS NOT NULL
+             AND o.contact_id = c.contact_id
+             AND ${reportingLeadExclusionSql("o")}
+         )
+       GROUP BY c.id`,
+      [range.startDate, range.endDate]
+    );
+
+    return result.rows
+      .filter(hasDirectSignupSourceEvidence)
+      .map((row) => ({
+        ...row,
+        reportingLeadType: "direct_recurring_signup"
+      }));
   }
 }
 
@@ -1107,6 +1184,55 @@ function rowsToSourceMetrics(rows: Array<Record<string, unknown>>): SourceMetric
   return { legacy, detailed };
 }
 
+function addSourceMetrics(target: SourceMetrics, addition: SourceMetrics): void {
+  for (const source of Object.keys(target.legacy) as LegacySource[]) {
+    target.legacy[source] += addition.legacy[source];
+  }
+  for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
+    target.detailed[bucket] += addition.detailed[bucket];
+  }
+}
+
+function sumDetailed(breakdown: DashboardDetailedSourceBreakdown | undefined): number {
+  if (!breakdown) {
+    return 0;
+  }
+  return DASHBOARD_SOURCE_BUCKETS.reduce((sum, bucket) => sum + breakdown[bucket], 0);
+}
+
+function hasDirectSignupSourceEvidence(row: Record<string, unknown>): boolean {
+  const metadata = asRecord(row.metadata);
+  if (
+    metadata &&
+    (
+      stringValue(metadata.sourceEvidenceField) ||
+      stringValue(metadata.sourceDetail) ||
+      stringValue(metadata.how_heard_answer) ||
+      stringValue(metadata.how_heard_about_us) ||
+      stringValue(metadata.how_heard_about_us_details)
+    )
+  ) {
+    return true;
+  }
+
+  const sourceEvidence = parseJsonMaybe(row.source_evidence);
+  if (Array.isArray(sourceEvidence)) {
+    return sourceEvidence.length > 0 && sourceEvidence.some((entry) => {
+      const evidence = asRecord(entry);
+      if (!evidence) {
+        return false;
+      }
+      return (
+        stringValue(evidence.source) ||
+        stringValue(evidence.source_raw) ||
+        asRecord(evidence.evidence) !== undefined
+      );
+    });
+  }
+
+  return false;
+}
+
 function legacySourceFromBucket(bucket: DashboardSourceBucket): LegacySource {
   switch (bucket) {
     case "facebook":
@@ -1158,7 +1284,7 @@ function dataNotes(input: {
     notes.push(input.googleAdsStatus.warning ?? "Latest Google Ads sync failed. Stored spend remains visible; check Sync Health for details.");
   }
   if (input.totalLeads === 0) {
-    notes.push("No GoHighLevel leads found for this range.");
+    notes.push("No reporting leads or direct recurring signups found for this range.");
   }
   if (input.newRecurringCustomers === 0) {
     notes.push("No new recurring Sweep&Go customers found for this range.");
@@ -1190,6 +1316,9 @@ function dataNotes(input: {
   if (input.closeRateMetrics.totalPriorPeriodLeadConversions > 0) {
     notes.push(`${input.closeRateMetrics.totalPriorPeriodLeadConversions} conversion(s) in this range came from leads created before the selected period; they do not increase the selected-period lead count.`);
   }
+  if (input.closeRateMetrics.directSignupReportingLeads > 0) {
+    notes.push(`${input.closeRateMetrics.directSignupReportingLeads} direct recurring signup(s) with source evidence counted as reporting leads for close-rate reporting.`);
+  }
   if (input.costPerNewRecurringCustomerStatus !== "available") {
     notes.push(`Cost per new customer note: ${input.costPerNewRecurringCustomerNote}.`);
   }
@@ -1215,6 +1344,7 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     websiteMatchedConversions: 0,
     totalMatchedConversions: 0,
     manualReviewConversions: 0,
+    directSignupReportingLeads: 0,
     facebookPriorPeriodLeadConversions: 0,
     websitePriorPeriodLeadConversions: 0,
     totalPriorPeriodLeadConversions: 0,
@@ -1342,6 +1472,23 @@ function percentage(part: number, total: number): number | null {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function parseJsonMaybe(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 function identifierValue(value: unknown): string | undefined {

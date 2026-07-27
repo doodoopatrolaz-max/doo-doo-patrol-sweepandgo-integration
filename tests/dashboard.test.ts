@@ -41,6 +41,9 @@ class FakePool {
         }]
       };
     }
+    if (sql.includes("direct_signup_reporting_leads")) {
+      return { rows: [] };
+    }
     if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
       return {
         rows: [
@@ -561,6 +564,9 @@ describe("dashboard KPI aggregation", () => {
     class GoogleSearchNewRecurringPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
         if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
           return {
             rows: [{
@@ -589,6 +595,16 @@ describe("dashboard KPI aggregation", () => {
     const summary = await new PostgresDashboardDataSource(new GoogleSearchNewRecurringPool())
       .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
 
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.websiteLeads, 1);
+    assert.deepEqual(summary.leadSourceBreakdown, {
+      website_paid: 1,
+      website_organic: 0,
+      facebook: 0,
+      referral: 0,
+      truck_wrap: 0,
+      other_unknown: 0
+    });
     assert.equal(summary.newRecurringCustomers, 1);
     assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 1, other: 0, unknown: 0 });
     assert.deepEqual(summary.newRecurringCustomerSourceBreakdown, {
@@ -599,10 +615,82 @@ describe("dashboard KPI aggregation", () => {
       truck_wrap: 0,
       other_unknown: 0
     });
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
+    assert.equal(summary.closeRateMetrics.directSignupReportingLeads, 1);
+    assert(summary.dataNotes.some((note) => note.includes("direct recurring signup")));
     assert.equal(summary.oneTimeCleanups, baseline.oneTimeCleanups);
     assert.equal(summary.cancellations, baseline.cancellations);
     assert.equal(summary.totalActiveClients, baseline.totalActiveClients);
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
+  });
+
+  it("counts direct recurring signups in organic, referral, truck wrap, and unknown buckets when evidence exists", async () => {
+    class DirectSignupBucketsPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [
+              {
+                source: "website",
+                source_raw: "website",
+                metadata: {},
+                monthly_recurring_revenue: null,
+                source_evidence: [{ source: "website", source_raw: "website", evidence: { lead_source: "website" } }]
+              },
+              {
+                source: "other",
+                source_raw: "Referral",
+                metadata: {},
+                monthly_recurring_revenue: null,
+                source_evidence: [{ source: "other", source_raw: "Referral", evidence: { how_heard_answer: "Referral" } }]
+              },
+              {
+                source: "other",
+                source_raw: "Truck Wrap",
+                metadata: {},
+                monthly_recurring_revenue: null,
+                source_evidence: [{ source: "other", source_raw: "Truck Wrap", evidence: { how_heard_answer: "Saw your truck wrap" } }]
+              },
+              {
+                source: "unknown",
+                source_raw: "unknown",
+                metadata: {},
+                monthly_recurring_revenue: null,
+                source_evidence: [{ source: "unknown", source_raw: "unknown", evidence: { source_status: "needs_review" } }]
+              }
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new DirectSignupBucketsPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+
+    assert.equal(summary.totalLeads, 4);
+    assert.equal(summary.newRecurringCustomers, 4);
+    assert.deepEqual(summary.leadSourceBreakdown, {
+      website_paid: 0,
+      website_organic: 1,
+      facebook: 0,
+      referral: 1,
+      truck_wrap: 1,
+      other_unknown: 1
+    });
+    assert.deepEqual(summary.newRecurringCustomerSourceBreakdown, summary.leadSourceBreakdown);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.referral.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.other_unknown.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
   });
 
   it("keeps lead exclusions explicit and migration-backed", () => {

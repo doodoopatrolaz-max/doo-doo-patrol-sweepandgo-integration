@@ -1,4 +1,5 @@
 import type { DashboardDateRange } from "./dateRange.ts";
+import type { DashboardDetailedSourceBreakdown, DashboardSourceBucket } from "./sourceAttribution.ts";
 
 export type DashboardSummary = {
   range: DashboardDateRange;
@@ -10,6 +11,7 @@ export type DashboardSummary = {
   websiteLeads: number;
   otherLeads: number;
   leadBreakdown: DashboardSourceBreakdown;
+  leadSourceBreakdown: DashboardDetailedSourceBreakdown;
   totalLeads: number;
   totalActiveClients: number | null;
   totalActiveClientsSource: string;
@@ -19,6 +21,7 @@ export type DashboardSummary = {
   oneTimeCleanupsReason: string;
   newRecurringCustomers: number;
   newRecurringCustomerBreakdown: DashboardSourceBreakdown;
+  newRecurringCustomerSourceBreakdown: DashboardDetailedSourceBreakdown;
   costPerLead: number | null;
   costPerNewRecurringCustomer: number | null;
   costPerNewRecurringCustomerStatus: DashboardCostPerNewCustomerStatus;
@@ -85,7 +88,14 @@ export type DashboardCloseRateMetrics = {
   websiteCloseRate: number | null;
   otherUnknownCloseRate: number | null;
   totalCloseRate: number | null;
+  sourceBreakdown: Record<DashboardSourceBucket, DashboardSourceCloseRateRow>;
   costPerNewCustomerStatus: DashboardCostPerNewCustomerStatus;
+};
+
+export type DashboardSourceCloseRateRow = {
+  leads: number;
+  conversions: number;
+  closeRate: number | null;
 };
 
 export type DashboardRevenuePerHourMetrics = {
@@ -163,7 +173,7 @@ export type DashboardTrendPoint = {
 };
 
 export type DashboardSourceRow = {
-  source: "facebook" | "website" | "other" | "unknown";
+  source: DashboardSourceBucket;
   leads: number;
   newRecurringCustomers: number;
 };

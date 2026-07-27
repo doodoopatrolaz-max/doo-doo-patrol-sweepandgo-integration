@@ -8,6 +8,7 @@ import { parseDashboardDateRange } from "../src/dashboard/dateRange.ts";
 import { renderDashboard } from "../src/dashboard/render.ts";
 import { EmptyDashboardDataSource, PostgresDashboardDataSource } from "../src/dashboard/service.ts";
 import { calculateCompletedJobRevenueMetrics } from "../src/dashboard/serviceRevenue.ts";
+import { emptyDetailedSourceBreakdown } from "../src/dashboard/sourceAttribution.ts";
 import type { DashboardData, DashboardDataSource, DashboardSummary } from "../src/dashboard/types.ts";
 import { createRequestHandler } from "../src/http/app.ts";
 import { InMemoryWebhookEventStore } from "../src/webhooks/inMemoryStore.ts";
@@ -40,32 +41,27 @@ class FakePool {
         }]
       };
     }
-    if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
-      return { rows: [{ facebook_leads: 7, website_leads: 10 }] };
-    }
-    if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
+    if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
       return {
         rows: [
-          { source: "facebook", count: 3 },
-          { source: "website", count: 2 },
-          { source: "other", count: 1 }
+          ...Array.from({ length: 7 }, () => ({ original_lead_source: "facebook", source: "facebook", metadata: { workflowLeadSource: "facebook" }, pipeline_name: "New Lead to Onboarding", stage_name: "Facebook New Lead" })),
+          ...Array.from({ length: 10 }, () => ({ original_lead_source: "website", source: "website", metadata: { workflowLeadSource: "website" }, pipeline_name: "New Lead to Onboarding", stage_name: "Website Quote Lead" }))
         ]
       };
     }
-    if (sql.includes("SUM(monthly_recurring_revenue)")) {
-      return { rows: [{ count: 2, mrr_added: 60, priced_count: 2 }] };
+    if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+      return {
+        rows: Array.from({ length: 3 }, () => ({
+          source: "website",
+          source_raw: "website",
+          metadata: {},
+          monthly_recurring_revenue: 30,
+          source_evidence: []
+        }))
+      };
     }
     if (sql.includes("FROM onboarding_intakes oi")) {
       return { rows: [{ one_time_cleanups: 2 }] };
-    }
-    if (sql.includes("facebook_customers")) {
-      return {
-        rows: [{
-          facebook_customers: 0,
-          website_customers: 3,
-          other_unknown_customers: 0
-        }]
-      };
     }
     if (sql.includes("FROM customers c")) {
       return {
@@ -279,6 +275,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
       websiteLeads: 0,
       otherLeads: 0,
       leadBreakdown: { facebook: 1, website: 0, other: 0, unknown: 0 },
+      leadSourceBreakdown: { ...emptyDetailedSourceBreakdown(), facebook: 1 },
       totalLeads: 1,
       totalActiveClients: 12,
       totalActiveClientsSource: "Sweep&Go BI customers where status is active and at least one recurring service is present.",
@@ -288,6 +285,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
       oneTimeCleanupsReason: "One-time cleanup signups in the selected range. Separate from recurring active clients.",
       newRecurringCustomers: 0,
       newRecurringCustomerBreakdown: { facebook: 0, website: 0, other: 0, unknown: 0 },
+      newRecurringCustomerSourceBreakdown: emptyDetailedSourceBreakdown(),
       costPerLead: 10,
       costPerNewRecurringCustomer: null,
       costPerNewRecurringCustomerStatus: "no_new_customers",
@@ -385,6 +383,14 @@ const summaryOnlyDataSource: DashboardDataSource = {
         websiteCloseRate: null,
         otherUnknownCloseRate: null,
         totalCloseRate: null,
+        sourceBreakdown: {
+          website_paid: { leads: 0, conversions: 0, closeRate: null },
+          website_organic: { leads: 0, conversions: 0, closeRate: null },
+          facebook: { leads: 0, conversions: 0, closeRate: null },
+          referral: { leads: 0, conversions: 0, closeRate: null },
+          truck_wrap: { leads: 0, conversions: 0, closeRate: null },
+          other_unknown: { leads: 0, conversions: 0, closeRate: null }
+        },
         costPerNewCustomerStatus: "no_new_customers"
       },
       dataNotes: ["Average Monthly Ticket is currently configured at $95.00."]
@@ -447,25 +453,41 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.googleSpend, 50);
     assert.equal(summary.googleAdsStatus.connected, true);
     assert.equal(summary.totalAdSpend, 150);
-    assert.equal(summary.facebookLeads, 3);
-    assert.equal(summary.websiteLeads, 2);
-    assert.equal(summary.otherLeads, 1);
-    assert.deepEqual(summary.leadBreakdown, { facebook: 3, website: 2, other: 1, unknown: 0 });
-    assert.equal(summary.totalLeads, 6);
+    assert.equal(summary.facebookLeads, 7);
+    assert.equal(summary.websiteLeads, 10);
+    assert.equal(summary.otherLeads, 0);
+    assert.deepEqual(summary.leadBreakdown, { facebook: 7, website: 10, other: 0, unknown: 0 });
+    assert.deepEqual(summary.leadSourceBreakdown, {
+      website_paid: 0,
+      website_organic: 10,
+      facebook: 7,
+      referral: 0,
+      truck_wrap: 0,
+      other_unknown: 0
+    });
+    assert.equal(summary.totalLeads, 17);
     assert.equal(summary.totalActiveClients, 4);
     assert.equal(summary.totalActiveClientsNeedsVerification, false);
     assert.equal(summary.totalActiveClientsAsOf, "2026-06-22T11:00:00.000Z");
     assert.equal(summary.oneTimeCleanups, 2);
     assert.equal(summary.oneTimeCleanupsReason, "One-time cleanup signups in the selected range. Separate from recurring active clients.");
-    assert.equal(summary.newRecurringCustomers, 2);
-    assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 0, other: 0, unknown: 2 });
-    assert.equal(summary.costPerLead, 25);
-    assert.equal(summary.costPerNewRecurringCustomer, 75);
+    assert.equal(summary.newRecurringCustomers, 3);
+    assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 3, other: 0, unknown: 0 });
+    assert.deepEqual(summary.newRecurringCustomerSourceBreakdown, {
+      website_paid: 0,
+      website_organic: 3,
+      facebook: 0,
+      referral: 0,
+      truck_wrap: 0,
+      other_unknown: 0
+    });
+    assert.equal(summary.costPerLead, 8.82);
+    assert.equal(summary.costPerNewRecurringCustomer, 50);
     assert.equal(summary.costPerNewRecurringCustomerStatus, "available");
     assert.equal(summary.costPerNewRecurringCustomerNote, "Ad spend divided by new recurring customers");
     assert.equal(summary.estimatedActiveMrr, null);
     assert.equal(summary.averageMonthlyTicket, 95);
-    assert.equal(summary.estimatedMrrAdded, 60);
+    assert.equal(summary.estimatedMrrAdded, 90);
     assert.equal(summary.cancellations, 1);
     assert.deepEqual(summary.cancellationMetrics, {
       countedCancellations: 1,
@@ -490,13 +512,15 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.completedStops, 1);
     assert.equal(summary.revenuePerHourMetrics.sprayRevenue, 20);
     assert.equal(summary.revenuePerHourMetrics.zeroDurationRevenueJobs, 1);
-    assert.equal(summary.netRecurringCustomerGrowth, 1);
+    assert.equal(summary.netRecurringCustomerGrowth, 2);
     assert.equal(summary.closeRateMetrics.facebookMatchedConversions, 0);
     assert.equal(summary.closeRateMetrics.websiteMatchedConversions, 3);
     assert.equal(summary.closeRateMetrics.totalMatchedConversions, 3);
     assert.equal(summary.closeRateMetrics.manualReviewConversions, 1);
     assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
     assert.equal(summary.closeRateMetrics.websiteCloseRate, 30);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.closeRate, 30);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.closeRate, 0);
     assert.equal(summary.closeRateMetrics.totalCloseRate, 17.65);
     assert(summary.dataNotes.some((note) => note.includes("manual review rows are not counted")));
     assert(summary.dataNotes.some((note) => note.includes("Cancellation quality check")));
@@ -526,9 +550,9 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(summary.oneTimeCleanups, 1);
     assert.equal(summary.totalActiveClients, 4);
-    assert.equal(summary.newRecurringCustomers, 2);
+    assert.equal(summary.newRecurringCustomers, 3);
     assert.equal(summary.churnRate, 0.4);
-    assert.equal(summary.netRecurringCustomerGrowth, 1);
+    assert.equal(summary.netRecurringCustomerGrowth, 2);
     assert.equal(summary.closeRateMetrics.totalMatchedConversions, 3);
     assert.equal(summary.revenuePerHourMetrics.oneTimeCleanupRowsExcluded, 0);
   });
@@ -585,9 +609,12 @@ describe("dashboard KPI aggregation", () => {
     assert(html.includes("$95.00"));
     assert(html.includes("As of latest Sweep&amp;Go active roster snapshot"));
     assert(html.includes("/assets/doo-doo-patrol-logo.png"));
-    assert(html.includes("<dt>Website</dt>"));
+    assert(html.includes("<dt>Website Paid</dt>"));
+    assert(html.includes("<dt>Website Organic</dt>"));
     assert(html.includes("<dt>Facebook</dt>"));
-    assert(html.includes("<dt>Unknown/Other</dt>"));
+    assert(html.includes("<dt>Referral</dt>"));
+    assert(html.includes("<dt>Truck Wrap</dt>"));
+    assert(html.includes("<dt>Other/Unknown</dt>"));
   });
 
   it("uses the owner-confirmed July 2026 churn baseline when no historical active roster snapshot exists", async () => {
@@ -674,8 +701,16 @@ describe("dashboard KPI aggregation", () => {
     class NoFacebookLeadPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
-        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
-          return { rows: [{ facebook_leads: 0, website_leads: 10 }] };
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return {
+            rows: Array.from({ length: 10 }, () => ({
+              original_lead_source: "website",
+              source: "website",
+              metadata: { workflowLeadSource: "website" },
+              pipeline_name: "New Lead to Onboarding",
+              stage_name: "Website Quote Lead"
+            }))
+          };
         }
         return await super.query(sql, params);
       }
@@ -691,14 +726,27 @@ describe("dashboard KPI aggregation", () => {
     class JulyWebsiteCloseRatePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
-        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
-          return { rows: [{ facebook_leads: 0, website_leads: 14, other_unknown_leads: 0 }] };
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return {
+            rows: Array.from({ length: 14 }, () => ({
+              original_lead_source: "website",
+              source: "website",
+              metadata: { workflowLeadSource: "website" },
+              pipeline_name: "New Lead to Onboarding",
+              stage_name: "Website Quote Lead"
+            }))
+          };
         }
-        if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
-          return { rows: [{ source: "website", count: 14 }] };
-        }
-        if (sql.includes("SUM(monthly_recurring_revenue)")) {
-          return { rows: [{ source: "website", count: 5, mrr_added: 0, priced_count: 0 }] };
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: Array.from({ length: 5 }, () => ({
+              source: "website",
+              source_raw: "website",
+              metadata: {},
+              monthly_recurring_revenue: null,
+              source_evidence: []
+            }))
+          };
         }
         if (sql.includes("FROM cancellations")) {
           return {
@@ -712,9 +760,6 @@ describe("dashboard KPI aggregation", () => {
               needs_review: 0
             }]
           };
-        }
-        if (sql.includes("facebook_customers")) {
-          return { rows: [{ facebook_customers: 0, website_customers: 5, other_unknown_customers: 0 }] };
         }
         if (sql.includes("FROM lead_customer_matches")) {
           return {
@@ -760,11 +805,45 @@ describe("dashboard KPI aggregation", () => {
     class FutureFacebookCloseRatePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
-        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
-          return { rows: [{ facebook_leads: 4, website_leads: 6, other_unknown_leads: 0 }] };
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return {
+            rows: [
+              ...Array.from({ length: 4 }, () => ({
+                original_lead_source: "facebook",
+                source: "facebook",
+                metadata: { workflowLeadSource: "facebook" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Facebook New Lead"
+              })),
+              ...Array.from({ length: 6 }, () => ({
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead"
+              }))
+            ]
+          };
         }
-        if (sql.includes("facebook_customers")) {
-          return { rows: [{ facebook_customers: 2, website_customers: 3, other_unknown_customers: 0 }] };
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [
+              ...Array.from({ length: 2 }, () => ({
+                source: "facebook",
+                source_raw: "facebook",
+                metadata: {},
+                monthly_recurring_revenue: null,
+                source_evidence: []
+              })),
+              ...Array.from({ length: 3 }, () => ({
+                source: "website",
+                source_raw: "website",
+                metadata: {},
+                monthly_recurring_revenue: null,
+                source_evidence: []
+              }))
+            ]
+          };
         }
         if (sql.includes("FROM lead_customer_matches")) {
           return {
@@ -796,14 +875,19 @@ describe("dashboard KPI aggregation", () => {
     class OriginalLeadMonthCreditPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
-        if (sql.includes("FROM opportunities") && sql.includes("facebook_leads")) {
-          return { rows: [{ facebook_leads: 0, website_leads: 10, other_unknown_leads: 0 }] };
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return {
+            rows: Array.from({ length: 10 }, () => ({
+              original_lead_source: "website",
+              source: "website",
+              metadata: { workflowLeadSource: "website" },
+              pipeline_name: "New Lead to Onboarding",
+              stage_name: "Website Quote Lead"
+            }))
+          };
         }
-        if (sql.includes("FROM opportunities") && sql.includes("GROUP BY") && sql.includes("original_lead_source")) {
-          return { rows: [{ source: "website", count: 10 }] };
-        }
-        if (sql.includes("facebook_customers")) {
-          return { rows: [{ facebook_customers: 0, website_customers: 0, other_unknown_customers: 0 }] };
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return { rows: [] };
         }
         if (sql.includes("FROM lead_customer_matches")) {
           return {
@@ -1111,8 +1195,16 @@ describe("dashboard KPI aggregation", () => {
         if (sql.includes("FROM daily_ad_performance")) {
           return { rows: [{ meta_spend: this.input.spend, google_spend: 0 }] };
         }
-        if (sql.includes("SUM(monthly_recurring_revenue)")) {
-          return { rows: [{ count: this.input.customers, mrr_added: 0, priced_count: 0 }] };
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: Array.from({ length: this.input.customers }, () => ({
+              source: "website",
+              source_raw: "website",
+              metadata: {},
+              monthly_recurring_revenue: null,
+              source_evidence: []
+            }))
+          };
         }
         return await super.query(sql, params);
       }

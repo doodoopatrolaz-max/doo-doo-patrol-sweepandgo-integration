@@ -1,4 +1,5 @@
 import type { DashboardDateRange } from "./dateRange.ts";
+import { DASHBOARD_SOURCE_BUCKETS, labelForDashboardSourceBucket, type DashboardDetailedSourceBreakdown } from "./sourceAttribution.ts";
 import type { DashboardData, DashboardSummary, DashboardSyncHealth, DashboardTrendPoint, DashboardSources } from "./types.ts";
 
 export function renderDashboardLogin(input: { disabled: boolean; failed?: boolean }): string {
@@ -99,18 +100,13 @@ function renderSummary(summary: DashboardSummary): string {
     {
       label: "Total Leads",
       value: String(summary.totalLeads),
-      breakdown: sourceBreakdownRows({
-        website: summary.leadBreakdown.website,
-        facebook: summary.leadBreakdown.facebook,
-        other: summary.leadBreakdown.other,
-        unknown: summary.leadBreakdown.unknown
-      }, { combineOtherUnknown: true })
+      breakdown: detailedSourceBreakdownRows(summary.leadSourceBreakdown)
     },
     {
       label: "New Recurring Customers",
       value: String(summary.newRecurringCustomers),
       breakdown: [
-        ...sourceBreakdownRows(summary.newRecurringCustomerBreakdown, { combineOtherUnknown: true }),
+        ...detailedSourceBreakdownRows(summary.newRecurringCustomerSourceBreakdown),
         ...(summary.priorPeriodLeadConversions > 0
           ? [{ label: "Prior-period lead", value: String(summary.priorPeriodLeadConversions) }]
           : [])
@@ -119,11 +115,10 @@ function renderSummary(summary: DashboardSummary): string {
     {
       label: "Close Rate",
       value: maybePercent(summary.closeRateMetrics.totalCloseRate),
-      breakdown: [
-        { label: "Website", value: maybePercent(summary.closeRateMetrics.websiteCloseRate) },
-        { label: "Facebook", value: maybePercent(summary.closeRateMetrics.facebookCloseRate) },
-        { label: "Unknown/Other", value: maybePercent(summary.closeRateMetrics.otherUnknownCloseRate) }
-      ],
+      breakdown: DASHBOARD_SOURCE_BUCKETS.map((bucket) => ({
+        label: labelForDashboardSourceBucket(bucket),
+        value: maybePercent(summary.closeRateMetrics.sourceBreakdown[bucket].closeRate)
+      })),
       note: summary.priorPeriodLeadConversions > 0
         ? `Includes ${summary.priorPeriodLeadConversions} prior-period lead conversion${summary.priorPeriodLeadConversions === 1 ? "" : "s"}.`
         : undefined
@@ -260,22 +255,11 @@ function renderCard(card: DashboardCard): string {
   `;
 }
 
-function sourceBreakdownRows(
-  input: { website: number; facebook: number; other: number; unknown: number },
-  options: { combineOtherUnknown?: boolean } = {}
-): DashboardCardBreakdown[] {
-  const rows = [
-    { label: "Website", value: String(input.website) },
-    { label: "Facebook", value: String(input.facebook) }
-  ];
-  if (options.combineOtherUnknown) {
-    rows.push({ label: "Other/Unknown", value: String(input.other + input.unknown) });
-    return rows;
-  }
-  if (input.unknown > 0 || input.other > 0) {
-    rows.push({ label: "Unknown/Other", value: String(input.unknown + input.other) });
-  }
-  return rows;
+function detailedSourceBreakdownRows(input: DashboardDetailedSourceBreakdown): DashboardCardBreakdown[] {
+  return DASHBOARD_SOURCE_BUCKETS.map((bucket) => ({
+    label: labelForDashboardSourceBucket(bucket),
+    value: String(input[bucket])
+  }));
 }
 
 function renderCharts(trends: DashboardTrendPoint[]): string {
@@ -326,7 +310,7 @@ function renderSources(sources: DashboardSources): string {
         <table>
           <thead><tr><th>Source</th><th>Leads</th><th>New recurring customers</th></tr></thead>
           <tbody>
-            ${sources.leadSources.map((row) => `<tr><td>${escapeHtml(title(row.source))}</td><td>${row.leads}</td><td>${row.newRecurringCustomers}</td></tr>`).join("")}
+            ${sources.leadSources.map((row) => `<tr><td>${escapeHtml(labelForDashboardSourceBucket(row.source))}</td><td>${row.leads}</td><td>${row.newRecurringCustomers}</td></tr>`).join("")}
           </tbody>
         </table>
       </div>

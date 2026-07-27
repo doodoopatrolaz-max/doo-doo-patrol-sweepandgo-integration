@@ -1,5 +1,13 @@
 import { enumerateDates, type DashboardDateRange } from "./dateRange.ts";
 import { calculateCompletedJobRevenueMetrics, calculateCompletedJobRevenueMetricsFromFacts } from "./serviceRevenue.ts";
+import {
+  DASHBOARD_SOURCE_BUCKETS,
+  addToDetailedBreakdown,
+  classifyDashboardSource,
+  emptyDetailedSourceBreakdown,
+  type DashboardDetailedSourceBreakdown,
+  type DashboardSourceBucket
+} from "./sourceAttribution.ts";
 import type {
   DashboardCampaignRow,
   DashboardAdProviderStatus,
@@ -21,7 +29,9 @@ type Queryable = {
   query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
 
-const SOURCES: DashboardSourceRow["source"][] = ["facebook", "website", "other", "unknown"];
+type LegacySource = keyof DashboardSourceBreakdown;
+
+const SOURCES: DashboardSourceRow["source"][] = DASHBOARD_SOURCE_BUCKETS;
 const DASHBOARD_LEAD_EXCLUSION_METRICS = "ARRAY['lead_denominator', 'dashboard_leads']";
 const DASHBOARD_REPORTING_TIME_ZONE = "America/Phoenix";
 export const TEMP_AVERAGE_MONTHLY_TICKET = 95;
@@ -51,6 +61,12 @@ type NewRecurringCustomerMetrics = {
   total: number;
   mrrAdded: number | null;
   bySource: DashboardSourceBreakdown;
+  sourceBreakdown: DashboardDetailedSourceBreakdown;
+};
+
+type SourceMetrics = {
+  legacy: DashboardSourceBreakdown;
+  detailed: DashboardDetailedSourceBreakdown;
 };
 
 type ChurnDenominator = {
@@ -91,12 +107,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     ]);
     const priorPeriodLeadConversions = closeRateMetricsBase.totalPriorPeriodLeadConversions;
 
-    const leadBreakdown = { ...leads };
+    const leadBreakdown = { ...leads.legacy };
+    const leadSourceBreakdown = { ...leads.detailed };
     const recurringBreakdown = { ...customers.bySource };
-    const facebookLeads = leadBreakdown.facebook;
-    const websiteLeads = leadBreakdown.website;
-    const otherLeads = leadBreakdown.other + leadBreakdown.unknown;
-    const totalLeads = facebookLeads + websiteLeads + otherLeads;
+    const recurringSourceBreakdown = { ...customers.sourceBreakdown };
+    const facebookLeads = leadSourceBreakdown.facebook;
+    const websiteLeads = leadSourceBreakdown.website_paid + leadSourceBreakdown.website_organic;
+    const otherLeads = leadSourceBreakdown.referral + leadSourceBreakdown.truck_wrap + leadSourceBreakdown.other_unknown;
+    const totalLeads = DASHBOARD_SOURCE_BUCKETS.reduce((sum, source) => sum + leadSourceBreakdown[source], 0);
     const newRecurringCustomers = customers.total + priorPeriodLeadConversions;
     const totalAdSpend = adSpend.meta + adSpend.google;
     const estimatedMrrAdded = customers.mrrAdded === null ? null : roundMoney(customers.mrrAdded);
@@ -126,6 +144,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       websiteLeads,
       otherLeads,
       leadBreakdown,
+      leadSourceBreakdown,
       totalLeads,
       totalActiveClients: activeCustomers.asOf ? activeCustomers.activeClients : null,
       totalActiveClientsSource: activeCustomers.source,
@@ -135,6 +154,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       oneTimeCleanupsReason: "One-time cleanup signups in the selected range. Separate from recurring active clients.",
       newRecurringCustomers,
       newRecurringCustomerBreakdown: recurringBreakdown,
+      newRecurringCustomerSourceBreakdown: recurringSourceBreakdown,
       costPerLead: totalLeads > 0 ? roundMoney(totalAdSpend / totalLeads) : null,
       costPerNewRecurringCustomer: costPerNewCustomer.value,
       costPerNewRecurringCustomerStatus: costPerNewCustomer.status,
@@ -255,18 +275,35 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   async getSources(range: DashboardDateRange): Promise<DashboardSources> {
     const [leadRows, customerRows, campaignRows, unmatchedRows] = await Promise.all([
       this.pool.query(
-        `SELECT original_lead_source AS source, COUNT(*)::int AS count
+        `SELECT original_lead_source,
+                source,
+                metadata,
+                pipeline_name,
+                stage_name
          FROM opportunities o
          WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
-           AND ${reportingLeadExclusionSql("o")}
-         GROUP BY o.original_lead_source`,
+           AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
-        `SELECT source, COUNT(*)::int AS count
-         FROM customers
-         WHERE first_recurring_date BETWEEN $1::date AND $2::date
-         GROUP BY source`,
+        `SELECT c.source,
+                c.source_raw,
+                c.metadata,
+                COALESCE(
+                  jsonb_agg(
+                    jsonb_build_object(
+                      'source', cs.source,
+                      'source_raw', cs.source_raw,
+                      'source_provider', cs.source_provider,
+                      'evidence', cs.evidence
+                    )
+                  ) FILTER (WHERE cs.id IS NOT NULL),
+                  '[]'::jsonb
+                ) AS source_evidence
+         FROM customers c
+         LEFT JOIN customer_sources cs ON cs.customer_id = c.id
+         WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
+         GROUP BY c.id`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
@@ -294,8 +331,19 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       )
     ]);
 
-    const leadCounts = sourceCountMap(leadRows.rows, "source", "count");
-    const customerCounts = sourceCountMap(customerRows.rows, "source", "count");
+    const leadCounts = rowsToSourceMetrics(leadRows.rows.map((row) => ({
+      original_lead_source: row.original_lead_source,
+      source: row.source,
+      metadata: row.metadata,
+      pipeline_name: row.pipeline_name,
+      stage_name: row.stage_name
+    }))).detailed;
+    const customerCounts = rowsToSourceMetrics(customerRows.rows.map((row) => ({
+      source: row.source,
+      source_raw: row.source_raw,
+      metadata: row.metadata,
+      source_evidence: row.source_evidence
+    }))).detailed;
     const leadSources = SOURCES.map((source) => ({
       source,
       leads: leadCounts[source] ?? 0,
@@ -430,36 +478,63 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     };
   }
 
-  private async leadsBySource(range: DashboardDateRange): Promise<Record<DashboardSourceRow["source"], number>> {
+  private async leadsBySource(range: DashboardDateRange): Promise<SourceMetrics> {
     const result = await this.pool.query(
-      `SELECT original_lead_source AS source, COUNT(*)::int AS count
+      `SELECT original_lead_source,
+              source,
+              metadata,
+              pipeline_name,
+              stage_name
        FROM opportunities o
        WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
-         AND ${reportingLeadExclusionSql("o")}
-       GROUP BY o.original_lead_source`,
+         AND ${reportingLeadExclusionSql("o")}`,
       [range.startDate, range.endDate]
     );
-    return sourceCountMap(result.rows, "source", "count");
+    return rowsToSourceMetrics(result.rows.map((row) => ({
+      original_lead_source: row.original_lead_source,
+      source: row.source,
+      metadata: row.metadata,
+      pipeline_name: row.pipeline_name,
+      stage_name: row.stage_name
+    })));
   }
 
   private async newRecurringCustomers(range: DashboardDateRange): Promise<NewRecurringCustomerMetrics> {
     const result = await this.pool.query(
-      `SELECT COALESCE(source, 'unknown') AS source,
-              COUNT(*)::int AS count,
-              SUM(monthly_recurring_revenue)::float AS mrr_added,
-              COUNT(monthly_recurring_revenue)::int AS priced_count
-       FROM customers
-       WHERE first_recurring_date BETWEEN $1::date AND $2::date
-       GROUP BY COALESCE(source, 'unknown')`,
+      `SELECT c.source,
+              c.source_raw,
+              c.metadata,
+              c.monthly_recurring_revenue,
+              COALESCE(
+                jsonb_agg(
+                  jsonb_build_object(
+                    'source', cs.source,
+                    'source_raw', cs.source_raw,
+                    'source_provider', cs.source_provider,
+                    'evidence', cs.evidence
+                  )
+                ) FILTER (WHERE cs.id IS NOT NULL),
+                '[]'::jsonb
+              ) AS source_evidence
+       FROM customers c
+       LEFT JOIN customer_sources cs ON cs.customer_id = c.id
+       WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
+       GROUP BY c.id`,
       [range.startDate, range.endDate]
     );
-    const bySource = sourceCountMap(result.rows, "source", "count");
-    const pricedCount = result.rows.reduce((sum, row) => sum + integerValue(row.priced_count), 0);
-    const mrrAdded = result.rows.reduce((sum, row) => sum + numberValue(row.mrr_added), 0);
+    const sourceMetrics = rowsToSourceMetrics(result.rows.map((row) => ({
+      source: row.source,
+      source_raw: row.source_raw,
+      metadata: row.metadata,
+      source_evidence: row.source_evidence
+    })));
+    const pricedCount = result.rows.filter((row) => row.monthly_recurring_revenue !== null && row.monthly_recurring_revenue !== undefined).length;
+    const mrrAdded = result.rows.reduce((sum, row) => sum + numberValue(row.monthly_recurring_revenue), 0);
     return {
-      total: bySource.facebook + bySource.website + bySource.other + bySource.unknown,
+      total: DASHBOARD_SOURCE_BUCKETS.reduce((sum, source) => sum + sourceMetrics.detailed[source], 0),
       mrrAdded: pricedCount > 0 ? mrrAdded : null,
-      bySource
+      bySource: sourceMetrics.legacy,
+      sourceBreakdown: sourceMetrics.detailed
     };
   }
 
@@ -774,22 +849,35 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
     const [leadRows, customerRows, matchRows] = await Promise.all([
       this.pool.query(
-        `SELECT
-           COUNT(*) FILTER (WHERE original_lead_source = 'facebook')::int AS facebook_leads,
-           COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads,
-           COUNT(*) FILTER (WHERE COALESCE(original_lead_source, 'unknown') NOT IN ('facebook', 'website'))::int AS other_unknown_leads
+        `SELECT original_lead_source,
+                source,
+                metadata,
+                pipeline_name,
+                stage_name
          FROM opportunities o
          WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
-        `SELECT
-           COUNT(*) FILTER (WHERE source = 'facebook')::int AS facebook_customers,
-           COUNT(*) FILTER (WHERE source = 'website')::int AS website_customers,
-           COUNT(*) FILTER (WHERE COALESCE(source, 'unknown') NOT IN ('facebook', 'website'))::int AS other_unknown_customers
-         FROM customers
-         WHERE first_recurring_date BETWEEN $1::date AND $2::date`,
+        `SELECT c.source,
+                c.source_raw,
+                c.metadata,
+                COALESCE(
+                  jsonb_agg(
+                    jsonb_build_object(
+                      'source', cs.source,
+                      'source_raw', cs.source_raw,
+                      'source_provider', cs.source_provider,
+                      'evidence', cs.evidence
+                    )
+                  ) FILTER (WHERE cs.id IS NOT NULL),
+                  '[]'::jsonb
+                ) AS source_evidence
+         FROM customers c
+         LEFT JOIN customer_sources cs ON cs.customer_id = c.id
+         WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
+         GROUP BY c.id`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
@@ -808,16 +896,43 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         [range.startDate, range.endDate]
       )
     ]);
-    const leadRow = leadRows.rows[0] ?? {};
-    const customerRow = customerRows.rows[0] ?? {};
+    const leadBreakdown = rowsToSourceMetrics(leadRows.rows.map((row) => ({
+      original_lead_source: row.original_lead_source,
+      source: row.source,
+      metadata: row.metadata,
+      pipeline_name: row.pipeline_name,
+      stage_name: row.stage_name
+    }))).detailed;
+    const customerBreakdown = rowsToSourceMetrics(customerRows.rows.map((row) => ({
+      source: row.source,
+      source_raw: row.source_raw,
+      metadata: row.metadata,
+      source_evidence: row.source_evidence
+    }))).detailed;
     const matchRow = matchRows.rows[0] ?? {};
-    const facebookLeads = integerValue(leadRow.facebook_leads);
-    const websiteLeads = integerValue(leadRow.website_leads);
-    const otherUnknownLeads = integerValue(leadRow.other_unknown_leads);
-    const facebookMatchedConversions = integerValue(customerRow.facebook_customers) + integerValue(matchRow.facebook_future_lead_month_credit);
-    const websiteMatchedConversions = integerValue(customerRow.website_customers) + integerValue(matchRow.website_future_lead_month_credit);
-    const otherUnknownMatchedConversions = integerValue(customerRow.other_unknown_customers) + integerValue(matchRow.other_unknown_future_lead_month_credit);
+    const futureCredits = emptyDetailedSourceBreakdown();
+    futureCredits.facebook = integerValue(matchRow.facebook_future_lead_month_credit);
+    futureCredits.website_organic = integerValue(matchRow.website_future_lead_month_credit);
+    futureCredits.other_unknown = integerValue(matchRow.other_unknown_future_lead_month_credit);
+    const conversionBreakdown = emptyDetailedSourceBreakdown();
+    for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
+      conversionBreakdown[bucket] = customerBreakdown[bucket] + futureCredits[bucket];
+    }
+    const facebookLeads = leadBreakdown.facebook;
+    const websiteLeads = leadBreakdown.website_paid + leadBreakdown.website_organic;
+    const otherUnknownLeads = leadBreakdown.referral + leadBreakdown.truck_wrap + leadBreakdown.other_unknown;
+    const facebookMatchedConversions = conversionBreakdown.facebook;
+    const websiteMatchedConversions = conversionBreakdown.website_paid + conversionBreakdown.website_organic;
+    const otherUnknownMatchedConversions = conversionBreakdown.referral + conversionBreakdown.truck_wrap + conversionBreakdown.other_unknown;
     const totalMatchedConversions = facebookMatchedConversions + websiteMatchedConversions + otherUnknownMatchedConversions;
+    const sourceBreakdown = Object.fromEntries(DASHBOARD_SOURCE_BUCKETS.map((bucket) => [
+      bucket,
+      {
+        leads: leadBreakdown[bucket],
+        conversions: conversionBreakdown[bucket],
+        closeRate: percentage(conversionBreakdown[bucket], leadBreakdown[bucket])
+      }
+    ])) as Record<DashboardSourceBucket, { leads: number; conversions: number; closeRate: number | null }>;
 
     return {
       facebookMatchedConversions,
@@ -831,6 +946,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       websiteCloseRate: percentage(websiteMatchedConversions, websiteLeads),
       otherUnknownCloseRate: percentage(otherUnknownMatchedConversions, otherUnknownLeads),
       totalCloseRate: percentage(totalMatchedConversions, facebookLeads + websiteLeads + otherUnknownLeads),
+      sourceBreakdown,
       costPerNewCustomerStatus: "unavailable_incomplete_spend_coverage"
     };
   }
@@ -852,6 +968,7 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       websiteLeads: 0,
       otherLeads: 0,
       leadBreakdown: emptySourceBreakdown(),
+      leadSourceBreakdown: emptyDetailedSourceBreakdown(),
       totalLeads: 0,
       totalActiveClients: null,
       totalActiveClientsSource: "No database connection is configured.",
@@ -860,6 +977,7 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       oneTimeCleanupsReason: "One-time cleanup signups unavailable because no database connection is configured.",
       newRecurringCustomers: 0,
       newRecurringCustomerBreakdown: emptySourceBreakdown(),
+      newRecurringCustomerSourceBreakdown: emptyDetailedSourceBreakdown(),
       costPerLead: null,
       costPerNewRecurringCustomer: 0,
       costPerNewRecurringCustomerStatus: "no_ad_spend",
@@ -978,24 +1096,30 @@ function indexByDate(rows: Array<Record<string, unknown>>): Map<string, Record<s
   return new Map(rows.map((row) => [String(row.date), row]));
 }
 
-function sourceCountMap(
-  rows: Array<Record<string, unknown>>,
-  sourceKey: string,
-  countKey: string
-): Record<DashboardSourceRow["source"], number> {
-  const output = emptySourceBreakdown();
+function rowsToSourceMetrics(rows: Array<Record<string, unknown>>): SourceMetrics {
+  const legacy = emptySourceBreakdown();
+  const detailed = emptyDetailedSourceBreakdown();
   for (const row of rows) {
-    const source = normalizeSource(row[sourceKey]);
-    output[source] += integerValue(row[countKey]);
+    const attribution = classifyDashboardSource(row);
+    addToDetailedBreakdown(detailed, attribution.bucket);
+    legacy[legacySourceFromBucket(attribution.bucket)] += 1;
   }
-  return output;
+  return { legacy, detailed };
 }
 
-function normalizeSource(value: unknown): DashboardSourceRow["source"] {
-  if (value === "facebook" || value === "website" || value === "other") {
-    return value;
+function legacySourceFromBucket(bucket: DashboardSourceBucket): LegacySource {
+  switch (bucket) {
+    case "facebook":
+      return "facebook";
+    case "website_paid":
+    case "website_organic":
+      return "website";
+    case "referral":
+    case "truck_wrap":
+      return "other";
+    case "other_unknown":
+      return "unknown";
   }
-  return "unknown";
 }
 
 function reportingLeadExclusionSql(alias: string): string {
@@ -1082,6 +1206,10 @@ function disconnectedGoogleAdsStatus(): DashboardAdProviderStatus {
 }
 
 function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
+  const sourceBreakdown = Object.fromEntries(DASHBOARD_SOURCE_BUCKETS.map((bucket) => [
+    bucket,
+    { leads: 0, conversions: 0, closeRate: null }
+  ])) as DashboardCloseRateMetrics["sourceBreakdown"];
   return {
     facebookMatchedConversions: 0,
     websiteMatchedConversions: 0,
@@ -1094,6 +1222,7 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     websiteCloseRate: null,
     otherUnknownCloseRate: null,
     totalCloseRate: null,
+    sourceBreakdown,
     costPerNewCustomerStatus: "no_ad_spend"
   };
 }

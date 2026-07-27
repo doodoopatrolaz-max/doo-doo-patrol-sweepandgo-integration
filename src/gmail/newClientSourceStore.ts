@@ -7,6 +7,7 @@ import {
   type NewClientSourceMatchCandidate,
   type ParsedSweepAndGoNewClientEmail
 } from "./newClientSourceEmail.ts";
+import type { NewClientSourceLookupAttemptInput } from "./newClientSourceLookup.ts";
 
 type Queryable = {
   query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -84,6 +85,42 @@ export class PostgresNewClientSourceEmailStore {
     };
   }
 
+  async recordLookupAttempt(input: NewClientSourceLookupAttemptInput): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO sweepandgo_new_client_source_lookup_attempts (
+          webhook_event_id,
+          event_fingerprint,
+          event_type,
+          phoenix_business_date,
+          status,
+          reason,
+          attempts,
+          last_attempted_at,
+          next_retry_after,
+          metadata
+       )
+       VALUES ($1::uuid, $2, $3, $4::date, $5, $6, 1, NOW(), $7::timestamptz, $8::jsonb)
+       ON CONFLICT (event_fingerprint)
+       DO UPDATE SET status = EXCLUDED.status,
+                     reason = EXCLUDED.reason,
+                     attempts = sweepandgo_new_client_source_lookup_attempts.attempts + 1,
+                     last_attempted_at = NOW(),
+                     next_retry_after = EXCLUDED.next_retry_after,
+                     metadata = sweepandgo_new_client_source_lookup_attempts.metadata || EXCLUDED.metadata,
+                     updated_at = NOW()`,
+      [
+        input.webhookEventId,
+        input.eventFingerprint,
+        input.eventType,
+        input.phoenixBusinessDate,
+        input.status,
+        input.reason ?? null,
+        input.status === "matched" ? null : nextRetryAfter().toISOString(),
+        JSON.stringify(input.metadata ?? {})
+      ]
+    );
+  }
+
   private async oneTimeCleanupCandidates(parsed: ParsedSweepAndGoNewClientEmail): Promise<NewClientSourceMatchCandidate[]> {
     const result = await this.pool.query(
       `SELECT
@@ -106,7 +143,7 @@ export class PostgresNewClientSourceEmailStore {
       [parsed.phoenixBusinessDate]
     );
 
-    return result.rows.map((row) => ({
+    return dedupeOneTimeCandidates(result.rows.map((row) => ({
       id: String(row.id),
       entityType: "one_time_cleanup_intake",
       businessDate: String(row.business_date),
@@ -115,7 +152,7 @@ export class PostgresNewClientSourceEmailStore {
       name: stringValue(row.customer_name) ?? fullNameFromFields(row),
       address: findFirstNestedString(row, ["service_address", "address", "home_address", "street_address"]),
       externalSweepGoId: stringValue(row.client_identifier) ?? findFirstNestedString(row, ["client", "client_id", "customer_id"])
-    }));
+    })));
   }
 
   private async recurringCustomerCandidates(parsed: ParsedSweepAndGoNewClientEmail): Promise<NewClientSourceMatchCandidate[]> {
@@ -246,6 +283,45 @@ export class PostgresNewClientSourceEmailStore {
   }
 }
 
+function nextRetryAfter(): Date {
+  return new Date(Date.now() + 30 * 60 * 1000);
+}
+
+function dedupeOneTimeCandidates(candidates: NewClientSourceMatchCandidate[]): NewClientSourceMatchCandidate[] {
+  const byKey = new Map<string, NewClientSourceMatchCandidate>();
+  for (const candidate of candidates) {
+    const key = oneTimeCandidateDedupeKey(candidate);
+    if (!key) {
+      byKey.set(`id:${candidate.id}`, candidate);
+      continue;
+    }
+    const existing = byKey.get(key);
+    if (!existing || Number(candidate.id) < Number(existing.id)) {
+      byKey.set(key, candidate);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function oneTimeCandidateDedupeKey(candidate: NewClientSourceMatchCandidate): string | undefined {
+  const date = candidate.businessDate;
+  const email = normalizeEmail(candidate.email);
+  if (email) {
+    return `${date}|email:${email}`;
+  }
+  const phone = normalizePhone(candidate.phone);
+  if (phone) {
+    return `${date}|phone:${phone}`;
+  }
+  const name = normalizeText(candidate.name);
+  const address = normalizeText(candidate.address);
+  if (name && address) {
+    return `${date}|name_address:${name}|${address}`;
+  }
+  const external = normalizeText(candidate.externalSweepGoId);
+  return external ? `${date}|external:${external}` : undefined;
+}
+
 function fullNameFromFields(row: Record<string, unknown>): string | undefined {
   const first = findFirstNestedString(row, ["first_name", "firstName"]);
   const last = findFirstNestedString(row, ["last_name", "lastName"]);
@@ -302,6 +378,30 @@ function stringValue(value: unknown): string | undefined {
     return String(value);
   }
   return undefined;
+}
+
+function normalizeEmail(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized) ? normalized : undefined;
+}
+
+function normalizePhone(value: string | undefined): string | undefined {
+  const digits = value?.replace(/\D/g, "");
+  if (!digits) {
+    return undefined;
+  }
+  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
+function normalizeText(value: string | undefined): string | undefined {
+  const normalized = value
+    ?.normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  return normalized || undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

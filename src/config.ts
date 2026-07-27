@@ -33,6 +33,13 @@ export type AppConfig = {
   goHighLevelWebsiteStageId?: string;
   goHighLevelWebsiteStageName: string;
   gmailWebhookSecret?: string;
+  gmailClientId?: string;
+  gmailClientSecret?: string;
+  gmailRefreshToken?: string;
+  gmailUserEmail?: string;
+  gmailApiScope: string;
+  gmailApiBaseUrl: string;
+  gmailOAuthTokenUrl: string;
   metaAdsWebhookSecret?: string;
   metaAccessToken?: string;
   metaAdAccountId?: string;
@@ -120,6 +127,13 @@ export function loadConfig(): AppConfig {
     goHighLevelWebsiteStageId: optionalEnv("GHL_WEBSITE_STAGE_ID"),
     goHighLevelWebsiteStageName: optionalEnv("GHL_WEBSITE_STAGE_NAME") ?? optionalEnv("GOHIGHLEVEL_STAGE_WEBSITE_QUOTE_LEAD") ?? "Website Quote Lead",
     gmailWebhookSecret: optionalEnv("GMAIL_WEBHOOK_SECRET"),
+    gmailClientId: optionalEnv("GMAIL_CLIENT_ID"),
+    gmailClientSecret: optionalEnv("GMAIL_CLIENT_SECRET"),
+    gmailRefreshToken: optionalEnv("GMAIL_REFRESH_TOKEN"),
+    gmailUserEmail: optionalEnv("GMAIL_USER_EMAIL") ?? "me",
+    gmailApiScope: requiredEnv("GMAIL_API_SCOPE", "https://www.googleapis.com/auth/gmail.readonly"),
+    gmailApiBaseUrl: requiredEnv("GMAIL_API_BASE_URL", "https://gmail.googleapis.com").replace(/\/+$/, ""),
+    gmailOAuthTokenUrl: requiredEnv("GMAIL_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
     metaAdsWebhookSecret: optionalEnv("META_ADS_WEBHOOK_SECRET"),
     metaAccessToken: optionalEnv("META_ACCESS_TOKEN"),
     metaAdAccountId: optionalEnv("META_AD_ACCOUNT_ID") ?? optionalEnv("META_ADS_ACCOUNT_ID"),

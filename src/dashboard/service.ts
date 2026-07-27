@@ -1127,6 +1127,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       const existing = grouped.get(dedupeKey);
       if (existing) {
         existing.rawRows += 1;
+        if (existing.source === "other_unknown" && source !== "other_unknown") {
+          existing.source = source;
+          existing.sourceInput = sourceInput;
+        }
         continue;
       }
       grouped.set(dedupeKey, {

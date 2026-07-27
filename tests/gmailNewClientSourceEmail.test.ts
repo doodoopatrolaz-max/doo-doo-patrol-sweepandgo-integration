@@ -149,6 +149,53 @@ describe("Sweep&Go new-client email source capture", () => {
     assert.equal(pool.queries.length, 1);
   });
 
+  it("matches duplicate one-time intake rows as one deduped cleanup candidate", async () => {
+    class DuplicateOneTimePool {
+      readonly queries: Array<{ sql: string; params: unknown[] }> = [];
+
+      async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM sweepandgo_new_client_email_sources")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM onboarding_intakes")) {
+          return {
+            rows: [
+              {
+                id: "5",
+                business_date: "2026-07-26",
+                customer_email: "cleanup@example.invalid",
+                customer_name: "Test Customer",
+                client_identifier: "client-duplicate",
+                verified_details: {},
+                payload: {},
+                webhook_payload: {}
+              },
+              {
+                id: "6",
+                business_date: "2026-07-26",
+                customer_email: "cleanup@example.invalid",
+                customer_name: "Test Customer",
+                client_identifier: "client-duplicate",
+                verified_details: {},
+                payload: {},
+                webhook_payload: {}
+              }
+            ]
+          };
+        }
+        return { rows: [] };
+      }
+    }
+
+    const pool = new DuplicateOneTimePool();
+    const result = await new PostgresNewClientSourceEmailStore(pool).apply(parseSweepAndGoNewClientEmail(baseEmail));
+
+    assert.equal(result.status, "matched");
+    assert.equal(result.entityType, "one_time_cleanup_intake");
+    assert.equal(result.matchMethod, "email_date");
+  });
+
   it("stores needs-review evidence without raw message body when no safe match exists", async () => {
     class NoMatchPool {
       readonly queries: Array<{ sql: string; params: unknown[] }> = [];

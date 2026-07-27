@@ -13,6 +13,9 @@ import { SweepAndGoWebhookBiProcessor } from "./sweepandgo/webhookBiProcessor.ts
 import { PostgresSweepAndGoWebhookBiStore } from "./sweepandgo/webhookBiStore.ts";
 import { GoHighLevelWebhookProcessor } from "./gohighlevel/webhookProcessor.ts";
 import { PostgresGoHighLevelWebhookStore } from "./gohighlevel/store.ts";
+import { SweepAndGoNewClientSourceLookupProcessor } from "./gmail/newClientSourceLookup.ts";
+import { PostgresNewClientSourceEmailStore } from "./gmail/newClientSourceStore.ts";
+import { createGmailReadOnlyClient, GmailReadOnlyClient } from "./gmail/readOnlyClient.ts";
 import { CompositeWebhookProcessor } from "./webhooks/compositeProcessor.ts";
 import { InMemoryWebhookEventStore } from "./webhooks/inMemoryStore.ts";
 import {
@@ -31,10 +34,16 @@ const integrationEventStore = pool
 const onboardingStore = pool ? new PostgresOnboardingIntakeStore(pool) : new InMemoryOnboardingIntakeStore();
 const sweepandgoClient = new SweepAndGoClient(config);
 const onboardingWebhookProcessor = new OnboardingWebhookProcessor(onboardingStore, sweepandgoClient);
+const gmailReadOnlyClient = createGmailReadOnlyClient(config);
+const gmailReadOnlyAvailability = new GmailReadOnlyClient(config).getAvailability();
 const webhookProcessor = pool
   ? new CompositeWebhookProcessor([
       onboardingWebhookProcessor,
-      new SweepAndGoWebhookBiProcessor(new PostgresSweepAndGoWebhookBiStore(pool))
+      new SweepAndGoWebhookBiProcessor(new PostgresSweepAndGoWebhookBiStore(pool)),
+      new SweepAndGoNewClientSourceLookupProcessor({
+        reader: gmailReadOnlyClient,
+        store: new PostgresNewClientSourceEmailStore(pool)
+      })
     ])
   : onboardingWebhookProcessor;
 const goHighLevelWebhookProcessor = pool
@@ -55,6 +64,13 @@ const app = createRequestHandler({
   webhookProcessor,
   integrationEventProcessor: goHighLevelWebhookProcessor
 });
+logger.info(
+  {
+    available: gmailReadOnlyAvailability.available,
+    missingVariableCount: gmailReadOnlyAvailability.missingVariables.length
+  },
+  "Gmail read-only source lookup status"
+);
 const dailyDashboardTimer = startDailyDashboardScheduler(config);
 
 const server = http.createServer(app).listen(config.port, config.host, () => {

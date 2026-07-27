@@ -59,6 +59,12 @@ export function createRequestHandler(options: CreateAppOptions) {
           dailyDashboardEnabled: options.config.dailyDashboardEnabled,
           dailyDashboardRecipientConfigured: Boolean(options.config.dailyDashboardRecipient),
           dailyDashboardEmailConfigured: Boolean(options.config.smtpHost && options.config.dailyDashboardFrom),
+          gmailReadOnlySourceLookupConfigured: Boolean(
+            options.config.gmailClientId &&
+            options.config.gmailClientSecret &&
+            options.config.gmailRefreshToken &&
+            options.config.gmailUserEmail
+          ),
           kpiDashboardConfigured: Boolean(options.config.dashboardPassword),
           placeholderWebhooks: {
             goHighLevel: Boolean(options.config.goHighLevelWebhookSecret),

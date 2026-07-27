@@ -745,6 +745,10 @@ describe("dashboard KPI aggregation", () => {
             rows: [
               {
                 ...oneTimeCleanupIntakeRow({ fingerprint: "email-source", name: "Test Cleanup", address: "123 Test St", source: "" }),
+                email_source_evidence: []
+              },
+              {
+                ...oneTimeCleanupIntakeRow({ fingerprint: "email-source-duplicate", name: "Test Cleanup", address: "123 Test St", source: "" }),
                 email_source_evidence: [{
                   email_source: "sweepandgo_new_client_email",
                   source_confidence: "owner_email_evidence",
@@ -763,6 +767,7 @@ describe("dashboard KPI aggregation", () => {
       .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
 
     assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
     assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
     assert.equal(summary.leadSourceBreakdown.truck_wrap, 1);
     assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.leads, 1);

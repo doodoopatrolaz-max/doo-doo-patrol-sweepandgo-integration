@@ -14,6 +14,7 @@
     "sync:sweepandgo:daily": "node --experimental-strip-types src/sweepandgo/incrementalDailySync.ts",
     "sync:sweepandgo:active-roster": "node --experimental-strip-types src/sweepandgo/activeRosterSnapshotSync.ts",
     "sync:sweepandgo:completed-jobs": "node --experimental-strip-types src/sweepandgo/completedJobsSyncCli.ts",
+    "sync:gmail:new-client-sources": "node --experimental-strip-types src/gmail/newClientSourceSyncCli.ts",
     "discover:gohighlevel:pipelines": "node --experimental-strip-types scripts/gohighlevel_discover_pipelines.mjs",
     "discover:gohighlevel:opportunities": "node --experimental-strip-types scripts/gohighlevel_limited_opportunity_discovery.mjs",
     "test:gohighlevel:webhook": "node --experimental-strip-types scripts/gohighlevel_webhook_synthetic_test.mjs",

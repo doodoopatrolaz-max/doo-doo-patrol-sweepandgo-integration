@@ -21,20 +21,38 @@ Matched evidence is stored in `sweepandgo_new_client_email_sources` with:
 - `how_heard_about_us_details`
 - matched onboarding intake or customer ID when safe
 
-## Automation Boundary
+## Automation
 
-This repository now has the parser, matcher, source-evidence table, and dashboard read path. It does not yet have a deployed Gmail inbox reader.
+This repository has the parser, matcher, source-evidence tables, dashboard read path, optional Gmail read-only API client, webhook-triggered lookup, and fallback sync command.
 
-Recommended next automation pattern:
+Webhook-triggered pattern:
 
-1. Add an approved read-only Gmail runtime or connector for `doodoopatrolaz@gmail.com`.
-2. Search every 15 or 30 minutes for Sweep&Go new-client account emails from the last 3 days.
-3. Parse each message with the new-client parser.
-4. Match using email/date, phone/date, stable Sweep&Go ID when available, then name/address/date.
-5. Store only parsed source evidence and match status.
-6. Do not modify Gmail messages unless a later explicit approval adds labels.
+1. Sweep&Go webhook intake stores and processes the BI event normally.
+2. For `client:client_onboarding_recurring` and `client:client_onboarding_onetime`, the app tries a read-only Gmail lookup after the webhook response has already been accepted for asynchronous processing.
+3. The Gmail search is limited to Sweep&Go new-client account emails around the Phoenix business date of the webhook.
+4. Parsed email evidence is matched using email/date, phone/date, stable Sweep&Go ID when available, then name/address/date.
+5. Email bodies are not stored. Only parsed source evidence, source bucket, match status, and sanitized lookup status are stored.
+6. Gmail lookup errors are non-fatal and do not fail the Sweep&Go webhook.
+7. If no email is found yet, `sweepandgo_new_client_source_lookup_attempts` records a pending lookup state for review/fallback.
 
-Manual command target when Gmail runtime is added:
+Required Railway variables for automatic Gmail source lookup:
+
+- `GMAIL_CLIENT_ID`
+- `GMAIL_CLIENT_SECRET`
+- `GMAIL_REFRESH_TOKEN`
+- `GMAIL_USER_EMAIL`
+- `GMAIL_API_SCOPE`
+- `GMAIL_API_BASE_URL`
+- `GMAIL_OAUTH_TOKEN_URL`
+
+If these variables are missing, the feature remains safely disabled and the health/smoke checks expose only boolean configuration status.
+
+Recommended fallback schedule after Gmail credentials are verified:
+
+- Command: `npm run sync:gmail:new-client-sources -- --since-days=3`
+- Schedule: every 30 minutes, or hourly if Gmail quota/noise becomes a concern.
+
+Manual fallback command:
 
 `npm run sync:gmail:new-client-sources -- --since-days=3`
 

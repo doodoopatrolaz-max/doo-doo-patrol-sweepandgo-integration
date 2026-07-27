@@ -6,6 +6,7 @@ import { InMemoryWebhookEventStore } from "../src/webhooks/inMemoryStore.ts";
 import { GoHighLevelClient } from "../src/gohighlevel/client.ts";
 import { MetaAdsClient } from "../src/metaAds/client.ts";
 import { GoogleAdsClient } from "../src/googleAds/client.ts";
+import { GmailReadOnlyClient } from "../src/gmail/readOnlyClient.ts";
 
 const requiredVariableNames = [
   "NODE_ENV",
@@ -51,6 +52,16 @@ const optionalDashboardVariableNames = [
   "DASHBOARD_PASSWORD"
 ];
 
+const optionalGmailReadOnlyVariableNames = [
+  "GMAIL_CLIENT_ID",
+  "GMAIL_CLIENT_SECRET",
+  "GMAIL_REFRESH_TOKEN",
+  "GMAIL_USER_EMAIL",
+  "GMAIL_API_SCOPE",
+  "GMAIL_API_BASE_URL",
+  "GMAIL_OAUTH_TOKEN_URL"
+];
+
 const config = loadConfig();
 const output = {
   applicationHealth: await checkHealth(config),
@@ -59,6 +70,7 @@ const output = {
   goHighLevelEnvironmentVariables: Object.fromEntries(optionalGoHighLevelVariableNames.map((name) => [name, Boolean(process.env[name])])),
   metaAdsEnvironmentVariables: Object.fromEntries(optionalMetaVariableNames.map((name) => [name, Boolean(process.env[name])])),
   googleAdsEnvironmentVariables: Object.fromEntries(optionalGoogleAdsVariableNames.map((name) => [name, Boolean(process.env[name])])),
+  gmailReadOnlyEnvironmentVariables: Object.fromEntries(optionalGmailReadOnlyVariableNames.map((name) => [name, Boolean(process.env[name])])),
   dashboardEnvironmentVariables: Object.fromEntries(optionalDashboardVariableNames.map((name) => [name, Boolean(process.env[name])])),
   sweepAndGoModulesPresent: {
     incrementalDailySync: fs.existsSync("src/sweepandgo/incrementalDailySync.ts"),
@@ -69,12 +81,13 @@ const output = {
   },
   goHighLevelModuleLoads: typeof GoHighLevelClient === "function",
   metaAdsModuleLoads: typeof MetaAdsClient === "function",
-  googleAdsModuleLoads: typeof GoogleAdsClient === "function"
+  googleAdsModuleLoads: typeof GoogleAdsClient === "function",
+  gmailReadOnlyModuleLoads: typeof GmailReadOnlyClient === "function"
 };
 
 console.log(JSON.stringify(output, null, 2));
 
-if (!output.applicationHealth.ok || output.database.status === "failed" || !output.goHighLevelModuleLoads || !output.metaAdsModuleLoads || !output.googleAdsModuleLoads) {
+if (!output.applicationHealth.ok || output.database.status === "failed" || !output.goHighLevelModuleLoads || !output.metaAdsModuleLoads || !output.googleAdsModuleLoads || !output.gmailReadOnlyModuleLoads) {
   process.exit(1);
 }
 

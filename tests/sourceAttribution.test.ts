@@ -78,6 +78,24 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.bucket, "facebook");
   });
 
+  it("maps Social Media plus Facebook to Facebook", () => {
+    const result = classifyDashboardSource({
+      how_heard_about_us: "Social Media",
+      how_heard_about_us_details: "Facebook"
+    });
+
+    assert.equal(result.bucket, "facebook");
+  });
+
+  it("maps Facebook in how-heard details to Facebook", () => {
+    const result = classifyDashboardSource({
+      how_heard_about_us: "Social Media",
+      source_detail: "Facebook"
+    });
+
+    assert.equal(result.bucket, "facebook");
+  });
+
   it("maps referral source to Referral", () => {
     const result = classifyDashboardSource({ how_heard_answer: "Referral", source_detail: "Neighbor" });
 

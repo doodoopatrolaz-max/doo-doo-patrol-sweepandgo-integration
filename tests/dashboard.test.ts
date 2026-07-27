@@ -774,6 +774,63 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.newRecurringCustomers, 3);
   });
 
+  it("uses Social Media plus Facebook email evidence for one-time cleanup Facebook attribution", async () => {
+    class FacebookEmailEvidenceOneTimeCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("to_regclass('public.sweepandgo_new_client_email_sources')")) {
+          return { rows: [{ table_name: "sweepandgo_new_client_email_sources" }] };
+        }
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              {
+                ...oneTimeCleanupIntakeRow({ fingerprint: "facebook-source", name: "Test Cleanup", address: "123 Test St", source: "" }),
+                email_source_evidence: [{
+                  email_source: "sweepandgo_new_client_email",
+                  source_confidence: "owner_email_evidence",
+                  clean_up_frequency: "One Time",
+                  how_heard_about_us: "Social Media",
+                  how_heard_about_us_details: "Facebook"
+                }]
+              },
+              {
+                ...oneTimeCleanupIntakeRow({ fingerprint: "facebook-source-duplicate", name: "Test Cleanup", address: "123 Test St", source: "" }),
+                email_source_evidence: []
+              }
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const baseline = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-27", end: "2026-07-27" }));
+    const summary = await new PostgresDashboardDataSource(new FacebookEmailEvidenceOneTimeCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-27", end: "2026-07-27" }));
+
+    assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 1);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.facebook, 1);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.leadSourceBreakdown.facebook, baseline.leadSourceBreakdown.facebook + 1);
+    assert.equal(summary.leadSourceBreakdown.other_unknown, baseline.leadSourceBreakdown.other_unknown);
+    assert.equal(
+      summary.closeRateMetrics.sourceBreakdown.facebook.leads,
+      baseline.closeRateMetrics.sourceBreakdown.facebook.leads + 1
+    );
+    assert.equal(
+      summary.closeRateMetrics.sourceBreakdown.facebook.conversions,
+      baseline.closeRateMetrics.sourceBreakdown.facebook.conversions + 1
+    );
+    assert.equal(summary.newRecurringCustomers, baseline.newRecurringCustomers);
+    assert.equal(summary.cancellations, baseline.cancellations);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
+    assert.equal(summary.revenuePerShiftHourMetrics.serviceRevenue, baseline.revenuePerShiftHourMetrics.serviceRevenue);
+  });
+
   it("maps a Search Engine plus Google new recurring customer to Website Paid without changing unrelated KPIs", async () => {
     class GoogleSearchNewRecurringPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

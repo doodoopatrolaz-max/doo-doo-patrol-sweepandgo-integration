@@ -24,27 +24,38 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.paidProof, true);
   });
 
-  it("maps Search Engine plus Google to Website Organic by default without paid proof", () => {
+  it("maps Search Engine plus Google to Website Paid by owner-approved dashboard rule", () => {
     const result = classifyDashboardSource({
       how_heard_answer: "Search Engine",
       how_heard_about_us_details: "Google"
     });
 
-    assert.equal(result.bucket, "website_organic");
+    assert.equal(result.bucket, "website_paid");
     assert.equal(result.googleSearchOnlyProof, true);
     assert.equal(result.paidProof, false);
   });
 
-  it("can map Search Engine plus Google to Website Paid by explicit config", () => {
+  it("maps Search Engine plus Google case-insensitively", () => {
+    const result = classifyDashboardSource({
+      how_heard_answer: "search engine",
+      how_heard_about_us_details: "GOOGLE"
+    });
+
+    assert.equal(result.bucket, "website_paid");
+    assert.equal(result.googleSearchOnlyProof, true);
+    assert.equal(result.paidProof, false);
+  });
+
+  it("can map Search Engine plus Google to Website Organic by explicit config if the business rule changes", () => {
     const result = classifyDashboardSource(
       {
         how_heard_answer: "Search Engine",
         how_heard_about_us_details: "Google"
       },
-      { googleSearchDefault: "website_paid" }
+      { googleSearchDefault: "website_organic" }
     );
 
-    assert.equal(result.bucket, "website_paid");
+    assert.equal(result.bucket, "website_organic");
     assert.equal(result.googleSearchOnlyProof, true);
   });
 

@@ -557,6 +557,49 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.oneTimeCleanupRowsExcluded, 0);
   });
 
+  it("maps a Search Engine plus Google new recurring customer to Website Paid without changing unrelated KPIs", async () => {
+    class GoogleSearchNewRecurringPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {
+                how_heard_answer: "Search Engine",
+                how_heard_about_us_details: "Google"
+              },
+              monthly_recurring_revenue: 95,
+              source_evidence: []
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const baseline = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+    const summary = await new PostgresDashboardDataSource(new GoogleSearchNewRecurringPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 1, other: 0, unknown: 0 });
+    assert.deepEqual(summary.newRecurringCustomerSourceBreakdown, {
+      website_paid: 1,
+      website_organic: 0,
+      facebook: 0,
+      referral: 0,
+      truck_wrap: 0,
+      other_unknown: 0
+    });
+    assert.equal(summary.oneTimeCleanups, baseline.oneTimeCleanups);
+    assert.equal(summary.cancellations, baseline.cancellations);
+    assert.equal(summary.totalActiveClients, baseline.totalActiveClients);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
+  });
+
   it("keeps lead exclusions explicit and migration-backed", () => {
     const migration = fs.readFileSync("migrations/008_create_reporting_exclusions.sql", "utf8");
 

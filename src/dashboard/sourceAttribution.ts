@@ -30,7 +30,8 @@ export const DASHBOARD_SOURCE_BUCKETS: DashboardSourceBucket[] = [
 ];
 
 export const DEFAULT_DASHBOARD_SOURCE_ATTRIBUTION_CONFIG: DashboardSourceAttributionConfig = {
-  googleSearchDefault: "website_organic"
+  // Owner-approved rule: Search Engine + Google is reported as Website Paid for dashboard attribution.
+  googleSearchDefault: "website_paid"
 };
 
 const PAID_UTM_MEDIUMS = new Set(["cpc", "ppc", "paid", "paid_search", "paid-search", "ads", "ad", "adwords", "google_ads", "google-ads"]);

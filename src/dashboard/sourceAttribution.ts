@@ -72,7 +72,7 @@ export function classifyDashboardSource(
     return sourceResult("referral", flattened, { referralProof: true });
   }
 
-  const truckWrapProof = /\b(truck wrap|truck|vehicle wrap|vehicle|saw truck|patrol truck|wrapped truck)\b/.test(text);
+  const truckWrapProof = /\b(truck wrap|truck|vehicle wrap|vehicle signage|vehicle sign|vehicle|saw truck|signage|patrol truck|wrapped truck)\b/.test(text);
   if (truckWrapProof) {
     return sourceResult("truck_wrap", flattened, { truckWrapProof: true });
   }

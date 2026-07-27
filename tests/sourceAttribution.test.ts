@@ -92,6 +92,13 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.truckWrapProof, true);
   });
 
+  it("maps vehicle signage source to Truck Wrap", () => {
+    const result = classifyDashboardSource({ how_heard_answer: "Vehicle Signage" });
+
+    assert.equal(result.bucket, "truck_wrap");
+    assert.equal(result.truckWrapProof, true);
+  });
+
   it("keeps ambiguous source in Other/Unknown", () => {
     const result = classifyDashboardSource({ source_detail: "direct_signup" });
 

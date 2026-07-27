@@ -15,6 +15,7 @@ import type {
   DashboardCloseRateMetrics,
   DashboardCostPerNewCustomerStatus,
   DashboardDataSource,
+  DashboardOneTimeCleanupMetrics,
   DashboardRevenuePerHourMetrics,
   DashboardRevenuePerShiftHourMetrics,
   DashboardSourceBreakdown,
@@ -69,6 +70,14 @@ type SourceMetrics = {
   detailed: DashboardDetailedSourceBreakdown;
 };
 
+type OneTimeCleanupSignup = {
+  cleanupDate: string;
+  dedupeKey: string;
+  source: DashboardSourceBucket;
+  sourceInput: Record<string, unknown>;
+  rawRows: number;
+};
+
 type ChurnDenominator = {
   count: number;
   note?: string;
@@ -87,7 +96,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       leads,
       customers,
       activeCustomers,
-      oneTimeCleanups,
+      oneTimeCleanupMetrics,
       cancellations,
       churnDenominator,
       revenuePerHourMetrics,
@@ -98,7 +107,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.leadsBySource(range),
       this.newRecurringCustomers(range),
       this.activeRecurringCustomers(),
-      this.oneTimeCleanups(range),
+      this.oneTimeCleanupMetrics(range),
       this.cancellations(range),
       this.activeCustomersAtRangeStart(range),
       this.revenuePerHourMetrics(range),
@@ -150,8 +159,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       totalActiveClientsSource: activeCustomers.source,
       totalActiveClientsAsOf: activeCustomers.asOf,
       totalActiveClientsNeedsVerification: activeCustomers.needsVerification,
-      oneTimeCleanups,
+      oneTimeCleanups: oneTimeCleanupMetrics.dedupedCount,
       oneTimeCleanupsReason: "One-time cleanup signups in the selected range. Separate from recurring active clients.",
+      oneTimeCleanupMetrics,
+      oneTimeCleanupSourceBreakdown: oneTimeCleanupMetrics.sourceBreakdown,
       newRecurringCustomers,
       newRecurringCustomerBreakdown: recurringBreakdown,
       newRecurringCustomerSourceBreakdown: recurringSourceBreakdown,
@@ -208,7 +219,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getTrends(range: DashboardDateRange): Promise<DashboardTrendPoint[]> {
-    const [spendRows, leadRows, customerRows, directSignupLeadCredits] = await Promise.all([
+    const [spendRows, leadRows, customerRows, directSignupLeadCredits, oneTimeCleanupLeadCredits] = await Promise.all([
       this.pool.query(
         `SELECT report_date::text AS date,
                 SUM(CASE WHEN platform = 'meta' THEN spend_amount ELSE 0 END)::float AS meta_spend,
@@ -241,7 +252,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          ORDER BY first_recurring_date`,
         [range.startDate, range.endDate]
       ),
-      this.directSignupLeadCreditsByDate(range)
+      this.directSignupLeadCreditsByDate(range),
+      this.oneTimeCleanupLeadCreditsByDate(range)
     ]);
 
     const spendByDate = indexByDate(spendRows.rows);
@@ -252,13 +264,20 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       const spend = spendByDate.get(date) ?? {};
       const leads = leadsByDate.get(date) ?? {};
       const directSignupLeads = directSignupLeadCredits.get(date);
+      const oneTimeCleanupLeads = oneTimeCleanupLeadCredits.get(date);
       const customers = customersByDate.get(date) ?? {};
       const metaSpend = numberValue(spend.meta_spend);
       const googleSpend = numberValue(spend.google_spend);
       const totalSpend = metaSpend + googleSpend;
-      const facebookLeads = integerValue(leads.facebook_leads) + (directSignupLeads?.legacy.facebook ?? 0);
-      const websiteLeads = integerValue(leads.website_leads) + (directSignupLeads?.legacy.website ?? 0);
-      const totalLeads = integerValue(leads.total_leads) + sumDetailed(directSignupLeads?.detailed);
+      const facebookLeads = integerValue(leads.facebook_leads)
+        + (directSignupLeads?.legacy.facebook ?? 0)
+        + (oneTimeCleanupLeads?.legacy.facebook ?? 0);
+      const websiteLeads = integerValue(leads.website_leads)
+        + (directSignupLeads?.legacy.website ?? 0)
+        + (oneTimeCleanupLeads?.legacy.website ?? 0);
+      const totalLeads = integerValue(leads.total_leads)
+        + sumDetailed(directSignupLeads?.detailed)
+        + sumDetailed(oneTimeCleanupLeads?.detailed);
       const newRecurringCustomers = integerValue(customers.new_recurring_customers);
 
       return {
@@ -277,7 +296,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getSources(range: DashboardDateRange): Promise<DashboardSources> {
-    const [leadRows, directSignupLeadRows, customerRows, campaignRows, unmatchedRows] = await Promise.all([
+    const [leadRows, directSignupLeadRows, oneTimeCleanupRows, customerRows, campaignRows, unmatchedRows] = await Promise.all([
       this.pool.query(
         `SELECT original_lead_source,
                 source,
@@ -290,6 +309,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         [range.startDate, range.endDate]
       ),
       this.directSignupLeadRows(range),
+      this.oneTimeCleanupSignupRows(range),
       this.pool.query(
         `SELECT c.source,
                 c.source_raw,
@@ -344,7 +364,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       pipeline_name: row.pipeline_name,
       stage_name: row.stage_name
       })),
-      ...directSignupLeadRows
+      ...directSignupLeadRows,
+      ...oneTimeCleanupRows.map((row) => row.sourceInput)
     ]).detailed;
     const customerCounts = rowsToSourceMetrics(customerRows.rows.map((row) => ({
       source: row.source,
@@ -487,7 +508,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async leadsBySource(range: DashboardDateRange): Promise<SourceMetrics> {
-    const [result, directSignupLeadRows] = await Promise.all([
+    const [result, directSignupLeadRows, oneTimeCleanupRows] = await Promise.all([
       this.pool.query(
       `SELECT original_lead_source,
               source,
@@ -499,7 +520,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          AND ${reportingLeadExclusionSql("o")}`,
       [range.startDate, range.endDate]
       ),
-      this.directSignupLeadRows(range)
+      this.directSignupLeadRows(range),
+      this.oneTimeCleanupSignupRows(range)
     ]);
     return rowsToSourceMetrics([
       ...result.rows.map((row) => ({
@@ -509,7 +531,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       pipeline_name: row.pipeline_name,
       stage_name: row.stage_name
       })),
-      ...directSignupLeadRows
+      ...directSignupLeadRows,
+      ...oneTimeCleanupRows.map((row) => row.sourceInput)
     ]);
   }
 
@@ -552,23 +575,20 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     };
   }
 
-  private async oneTimeCleanups(range: DashboardDateRange): Promise<number> {
-    const result = await this.pool.query(
-      `SELECT COUNT(DISTINCT (
-                ((COALESCE(we.received_at, oi.created_at) AT TIME ZONE 'America/Phoenix')::date::text)
-                || CHR(124)
-                || COALESCE(NULLIF(oi.client_identifier, ''), oi.trigger_event_fingerprint)
-              ))::int AS one_time_cleanups
-       FROM onboarding_intakes oi
-       LEFT JOIN webhook_events we ON we.id = oi.webhook_event_id
-       WHERE (COALESCE(we.received_at, oi.created_at) AT TIME ZONE 'America/Phoenix')::date BETWEEN $1::date AND $2::date
-         AND (
-           oi.event_type = 'client:client_onboarding_onetime'
-           OR oi.service_type ILIKE '%one%time%'
-         )`,
-      [range.startDate, range.endDate]
-    );
-    return integerValue(result.rows[0]?.one_time_cleanups);
+  private async oneTimeCleanupMetrics(range: DashboardDateRange): Promise<DashboardOneTimeCleanupMetrics> {
+    const signups = await this.oneTimeCleanupSignupRows(range);
+    const rawRows = signups.reduce((sum, row) => sum + row.rawRows, 0);
+    const sourceBreakdown = emptyDetailedSourceBreakdown();
+    for (const signup of signups) {
+      sourceBreakdown[signup.source] += 1;
+    }
+    return {
+      rawRows,
+      dedupedCount: signups.length,
+      duplicateGroups: signups.filter((row) => row.rawRows > 1).length,
+      duplicateRowsRemoved: rawRows - signups.length,
+      sourceBreakdown
+    };
   }
 
   private async activeRecurringCustomers(): Promise<{
@@ -861,7 +881,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
-    const [leadRows, directSignupLeadRows, customerRows, matchRows] = await Promise.all([
+    const [leadRows, directSignupLeadRows, oneTimeCleanupRows, customerRows, matchRows] = await Promise.all([
       this.pool.query(
         `SELECT original_lead_source,
                 source,
@@ -874,6 +894,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         [range.startDate, range.endDate]
       ),
       this.directSignupLeadRows(range),
+      this.oneTimeCleanupSignupRows(range),
       this.pool.query(
         `SELECT c.source,
                 c.source_raw,
@@ -912,6 +933,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       )
     ]);
     const directSignupLeadBreakdown = rowsToSourceMetrics(directSignupLeadRows).detailed;
+    const oneTimeCleanupBreakdown = rowsToSourceMetrics(oneTimeCleanupRows.map((row) => row.sourceInput)).detailed;
     const leadBreakdown = rowsToSourceMetrics([
       ...leadRows.rows.map((row) => ({
       original_lead_source: row.original_lead_source,
@@ -920,7 +942,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       pipeline_name: row.pipeline_name,
       stage_name: row.stage_name
       })),
-      ...directSignupLeadRows
+      ...directSignupLeadRows,
+      ...oneTimeCleanupRows.map((row) => row.sourceInput)
     ]).detailed;
     const customerBreakdown = rowsToSourceMetrics(customerRows.rows.map((row) => ({
       source: row.source,
@@ -935,7 +958,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     futureCredits.other_unknown = integerValue(matchRow.other_unknown_future_lead_month_credit);
     const conversionBreakdown = emptyDetailedSourceBreakdown();
     for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
-      conversionBreakdown[bucket] = customerBreakdown[bucket] + futureCredits[bucket];
+      conversionBreakdown[bucket] = customerBreakdown[bucket] + futureCredits[bucket] + oneTimeCleanupBreakdown[bucket];
     }
     const facebookLeads = leadBreakdown.facebook;
     const websiteLeads = leadBreakdown.website_paid + leadBreakdown.website_organic;
@@ -959,6 +982,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       totalMatchedConversions,
       manualReviewConversions: integerValue(matchRow.manual_review),
       directSignupReportingLeads: sumDetailed(directSignupLeadBreakdown),
+      oneTimeCleanupReportingLeads: sumDetailed(oneTimeCleanupBreakdown),
+      oneTimeCleanupConversions: sumDetailed(oneTimeCleanupBreakdown),
       facebookPriorPeriodLeadConversions: integerValue(matchRow.facebook_prior_period),
       websitePriorPeriodLeadConversions: integerValue(matchRow.website_prior_period),
       totalPriorPeriodLeadConversions: integerValue(matchRow.total_prior_period),
@@ -983,6 +1008,18 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       const metrics = rowsToSourceMetrics([row]);
       addSourceMetrics(entry, metrics);
       byDate.set(date, entry);
+    }
+    return byDate;
+  }
+
+  private async oneTimeCleanupLeadCreditsByDate(range: DashboardDateRange): Promise<Map<string, SourceMetrics>> {
+    const rows = await this.oneTimeCleanupSignupRows(range);
+    const byDate = new Map<string, SourceMetrics>();
+    for (const row of rows) {
+      const entry = byDate.get(row.cleanupDate) ?? { legacy: emptySourceBreakdown(), detailed: emptyDetailedSourceBreakdown() };
+      const metrics = rowsToSourceMetrics([row.sourceInput]);
+      addSourceMetrics(entry, metrics);
+      byDate.set(row.cleanupDate, entry);
     }
     return byDate;
   }
@@ -1027,6 +1064,56 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         reportingLeadType: "direct_recurring_signup"
       }));
   }
+
+  private async oneTimeCleanupSignupRows(range: DashboardDateRange): Promise<OneTimeCleanupSignup[]> {
+    const result = await this.pool.query(
+      `SELECT /* one_time_cleanup_reporting_rows */
+              (COALESCE(we.received_at, oi.created_at) AT TIME ZONE '${DASHBOARD_REPORTING_TIME_ZONE}')::date::text AS cleanup_date,
+              oi.event_type,
+              oi.trigger_event_fingerprint,
+              oi.customer_email,
+              oi.customer_name,
+              oi.client_identifier,
+              oi.service_type,
+              oi.verified_details,
+              oi.payload,
+              oi.sweepandgo_details
+       FROM onboarding_intakes oi
+       LEFT JOIN webhook_events we ON we.id = oi.webhook_event_id
+       WHERE (COALESCE(we.received_at, oi.created_at) AT TIME ZONE '${DASHBOARD_REPORTING_TIME_ZONE}')::date BETWEEN $1::date AND $2::date
+         AND (
+           oi.event_type = 'client:client_onboarding_onetime'
+           OR oi.service_type ILIKE '%one%time%'
+           OR oi.service_type ILIKE '%one_time%'
+         )`,
+      [range.startDate, range.endDate]
+    );
+    const grouped = new Map<string, OneTimeCleanupSignup>();
+
+    for (const row of result.rows) {
+      const cleanupDate = stringValue(row.cleanup_date);
+      if (!cleanupDate) {
+        continue;
+      }
+      const dedupeKey = oneTimeCleanupDedupeKey(row, cleanupDate);
+      const sourceInput = oneTimeCleanupSourceInput(row);
+      const source = classifyDashboardSource(sourceInput).bucket;
+      const existing = grouped.get(dedupeKey);
+      if (existing) {
+        existing.rawRows += 1;
+        continue;
+      }
+      grouped.set(dedupeKey, {
+        cleanupDate,
+        dedupeKey,
+        source,
+        sourceInput,
+        rawRows: 1
+      });
+    }
+
+    return [...grouped.values()];
+  }
 }
 
 function leadReportingDateSql(column: string): string {
@@ -1052,6 +1139,8 @@ export class EmptyDashboardDataSource implements DashboardDataSource {
       totalActiveClientsNeedsVerification: true,
       oneTimeCleanups: 0,
       oneTimeCleanupsReason: "One-time cleanup signups unavailable because no database connection is configured.",
+      oneTimeCleanupMetrics: emptyOneTimeCleanupMetrics(),
+      oneTimeCleanupSourceBreakdown: emptyDetailedSourceBreakdown(),
       newRecurringCustomers: 0,
       newRecurringCustomerBreakdown: emptySourceBreakdown(),
       newRecurringCustomerSourceBreakdown: emptyDetailedSourceBreakdown(),
@@ -1184,6 +1273,18 @@ function rowsToSourceMetrics(rows: Array<Record<string, unknown>>): SourceMetric
   return { legacy, detailed };
 }
 
+function addDetailedBreakdown(target: DashboardDetailedSourceBreakdown, addition: DashboardDetailedSourceBreakdown): void {
+  for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
+    target[bucket] += addition[bucket];
+  }
+}
+
+function addSourceMetricsFromDetailed(target: DashboardSourceBreakdown, addition: DashboardDetailedSourceBreakdown): void {
+  for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
+    target[legacySourceFromBucket(bucket)] += addition[bucket];
+  }
+}
+
 function addSourceMetrics(target: SourceMetrics, addition: SourceMetrics): void {
   for (const source of Object.keys(target.legacy) as LegacySource[]) {
     target.legacy[source] += addition.legacy[source];
@@ -1231,6 +1332,169 @@ function hasDirectSignupSourceEvidence(row: Record<string, unknown>): boolean {
   }
 
   return false;
+}
+
+function oneTimeCleanupDedupeKey(row: Record<string, unknown>, cleanupDate: string): string {
+  const visitIdentifier = findFirstNestedString(row, [
+    "job_id",
+    "jobId",
+    "visit_id",
+    "visitId",
+    "booking_id",
+    "bookingId",
+    "appointment_id",
+    "appointmentId",
+    "service_id",
+    "serviceId"
+  ]);
+  if (visitIdentifier) {
+    return `${cleanupDate}|one_time|visit:${normalizeKeyPart(visitIdentifier)}`;
+  }
+
+  const clientIdentifier = stringValue(row.client_identifier) ?? findFirstNestedString(row, [
+    "client",
+    "client_id",
+    "clientId",
+    "customer",
+    "customer_id",
+    "customerId"
+  ]);
+  if (clientIdentifier) {
+    return `${cleanupDate}|one_time|client:${normalizeKeyPart(clientIdentifier)}`;
+  }
+
+  const email = normalizeEmail(stringValue(row.customer_email) ?? findFirstNestedString(row, [
+    "email",
+    "customer_email",
+    "customerEmail",
+    "client_email",
+    "clientEmail"
+  ]));
+  if (email) {
+    return `${cleanupDate}|one_time|email:${email}`;
+  }
+
+  const phone = normalizePhone(findFirstNestedString(row, [
+    "phone",
+    "phone_number",
+    "phoneNumber",
+    "cell_phone",
+    "cellPhone",
+    "cell_phone_number",
+    "cellPhoneNumber",
+    "mobile"
+  ]));
+  if (phone) {
+    return `${cleanupDate}|one_time|phone:${phone}`;
+  }
+
+  const name = normalizeTextKey(stringValue(row.customer_name) ?? findFirstNestedString(row, [
+    "customer_name",
+    "customerName",
+    "client_name",
+    "clientName",
+    "name",
+    "full_name",
+    "fullName"
+  ]));
+  const address = normalizeTextKey(findFirstNestedString(row, [
+    "service_address",
+    "serviceAddress",
+    "address",
+    "street_address",
+    "streetAddress"
+  ]));
+  if (name && address) {
+    return `${cleanupDate}|one_time|name_address:${name}|${address}`;
+  }
+
+  return `${cleanupDate}|one_time|fingerprint:${normalizeKeyPart(stringValue(row.trigger_event_fingerprint) ?? "unknown")}`;
+}
+
+function oneTimeCleanupSourceInput(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    source: findFirstNestedString(row, ["lead_source", "original_source", "source", "customer_source", "acquisition_source", "tracking_field"]),
+    source_raw: findFirstNestedString(row, ["source_raw", "sourceRaw"]),
+    metadata: {
+      event_type: row.event_type,
+      service_type: row.service_type,
+      verified_details: row.verified_details,
+      payload: row.payload,
+      sweepandgo_details: row.sweepandgo_details
+    }
+  };
+}
+
+function findFirstNestedString(value: unknown, keys: string[]): string | undefined {
+  const normalizedKeys = new Set(keys.map(normalizeSearchKey));
+  const found = findFirstNestedValue(value, normalizedKeys);
+  if (typeof found === "string" && found.trim()) {
+    return found.trim();
+  }
+  if (typeof found === "number" && Number.isFinite(found)) {
+    return String(found);
+  }
+  return undefined;
+}
+
+function findFirstNestedValue(value: unknown, keys: Set<string>): unknown {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirstNestedValue(item, keys);
+      if (found !== undefined && found !== null && found !== "") {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (keys.has(normalizeSearchKey(key)) && nested !== undefined && nested !== null && nested !== "") {
+      const verified = asRecord(nested);
+      if (verified && "value" in verified) {
+        return verified.value;
+      }
+      return nested;
+    }
+  }
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    const found = findFirstNestedValue(nested, keys);
+    if (found !== undefined && found !== null && found !== "") {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+function normalizeSearchKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeKeyPart(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function normalizeEmail(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && normalized.includes("@") ? normalized : undefined;
+}
+
+function normalizePhone(value: string | undefined): string | undefined {
+  const digits = value?.replace(/\D/g, "") ?? "";
+  return digits.length >= 7 ? digits : undefined;
+}
+
+function normalizeTextKey(value: string | undefined): string | undefined {
+  const normalized = value
+    ?.normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  return normalized || undefined;
 }
 
 function legacySourceFromBucket(bucket: DashboardSourceBucket): LegacySource {
@@ -1319,10 +1583,13 @@ function dataNotes(input: {
   if (input.closeRateMetrics.directSignupReportingLeads > 0) {
     notes.push(`${input.closeRateMetrics.directSignupReportingLeads} direct recurring signup(s) with source evidence counted as reporting leads for close-rate reporting.`);
   }
+  if (input.closeRateMetrics.oneTimeCleanupReportingLeads > 0) {
+    notes.push(`${input.closeRateMetrics.oneTimeCleanupReportingLeads} one-time cleanup signup(s) counted as source-attributed leads and closed signups for close-rate reporting. Recurring customer count remains separate.`);
+  }
   if (input.costPerNewRecurringCustomerStatus !== "available") {
     notes.push(`Cost per new customer note: ${input.costPerNewRecurringCustomerNote}.`);
   }
-  notes.push("Close rate uses new recurring customers in the selected period divided by leads created in the selected period. Website and Facebook rates use the same source-specific formula; manual review rows are not counted as conversions.");
+  notes.push("Close rate uses source-attributed closed signups in the selected period divided by source-attributed leads/signups in the selected period. It includes recurring customer signups and one-time cleanup signups; manual review rows are not counted as conversions.");
   return notes;
 }
 
@@ -1345,6 +1612,8 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     totalMatchedConversions: 0,
     manualReviewConversions: 0,
     directSignupReportingLeads: 0,
+    oneTimeCleanupReportingLeads: 0,
+    oneTimeCleanupConversions: 0,
     facebookPriorPeriodLeadConversions: 0,
     websitePriorPeriodLeadConversions: 0,
     totalPriorPeriodLeadConversions: 0,
@@ -1354,6 +1623,16 @@ function emptyCloseRateMetrics(): DashboardCloseRateMetrics {
     totalCloseRate: null,
     sourceBreakdown,
     costPerNewCustomerStatus: "no_ad_spend"
+  };
+}
+
+function emptyOneTimeCleanupMetrics(): DashboardOneTimeCleanupMetrics {
+  return {
+    rawRows: 0,
+    dedupedCount: 0,
+    duplicateGroups: 0,
+    duplicateRowsRemoved: 0,
+    sourceBreakdown: emptyDetailedSourceBreakdown()
   };
 }
 

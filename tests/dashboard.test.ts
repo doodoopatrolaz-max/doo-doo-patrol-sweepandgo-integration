@@ -44,6 +44,9 @@ class FakePool {
     if (sql.includes("direct_signup_reporting_leads")) {
       return { rows: [] };
     }
+    if (sql.includes("one_time_cleanup_reporting_rows")) {
+      return { rows: [] };
+    }
     if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
       return {
         rows: [
@@ -62,9 +65,6 @@ class FakePool {
           source_evidence: []
         }))
       };
-    }
-    if (sql.includes("FROM onboarding_intakes oi")) {
-      return { rows: [{ one_time_cleanups: 2 }] };
     }
     if (sql.includes("FROM customers c")) {
       return {
@@ -286,6 +286,14 @@ const summaryOnlyDataSource: DashboardDataSource = {
       totalActiveClientsNeedsVerification: false,
       oneTimeCleanups: 0,
       oneTimeCleanupsReason: "One-time cleanup signups in the selected range. Separate from recurring active clients.",
+      oneTimeCleanupMetrics: {
+        rawRows: 0,
+        dedupedCount: 0,
+        duplicateGroups: 0,
+        duplicateRowsRemoved: 0,
+        sourceBreakdown: emptyDetailedSourceBreakdown()
+      },
+      oneTimeCleanupSourceBreakdown: emptyDetailedSourceBreakdown(),
       newRecurringCustomers: 0,
       newRecurringCustomerBreakdown: { facebook: 0, website: 0, other: 0, unknown: 0 },
       newRecurringCustomerSourceBreakdown: emptyDetailedSourceBreakdown(),
@@ -379,6 +387,9 @@ const summaryOnlyDataSource: DashboardDataSource = {
         websiteMatchedConversions: 0,
         totalMatchedConversions: 0,
         manualReviewConversions: 0,
+        directSignupReportingLeads: 0,
+        oneTimeCleanupReportingLeads: 0,
+        oneTimeCleanupConversions: 0,
         facebookPriorPeriodLeadConversions: 0,
         websitePriorPeriodLeadConversions: 0,
         totalPriorPeriodLeadConversions: 0,
@@ -472,7 +483,8 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalActiveClients, 4);
     assert.equal(summary.totalActiveClientsNeedsVerification, false);
     assert.equal(summary.totalActiveClientsAsOf, "2026-06-22T11:00:00.000Z");
-    assert.equal(summary.oneTimeCleanups, 2);
+    assert.equal(summary.oneTimeCleanups, 0);
+    assert.deepEqual(summary.oneTimeCleanupSourceBreakdown, emptyDetailedSourceBreakdown());
     assert.equal(summary.oneTimeCleanupsReason, "One-time cleanup signups in the selected range. Separate from recurring active clients.");
     assert.equal(summary.newRecurringCustomers, 3);
     assert.deepEqual(summary.newRecurringCustomerBreakdown, { facebook: 0, website: 3, other: 0, unknown: 0 });
@@ -538,11 +550,28 @@ describe("dashboard KPI aggregation", () => {
     class OneTimeCleanupPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
-        if (sql.includes("FROM onboarding_intakes oi")) {
-          assert(sql.includes("COUNT(DISTINCT"));
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
           assert(sql.includes("client:client_onboarding_onetime"));
           assert(sql.includes("AT TIME ZONE 'America/Phoenix'"));
-          return { rows: [{ one_time_cleanups: 1 }] };
+          return {
+            rows: [{
+              cleanup_date: "2026-07-24",
+              event_type: "client:client_onboarding_onetime",
+              trigger_event_fingerprint: "safe-one-time-fingerprint",
+              customer_email: null,
+              customer_name: "Test One Time",
+              client_identifier: null,
+              service_type: "one-time",
+              verified_details: {
+                customerName: { value: "Test One Time" },
+                serviceAddress: { value: "123 Test St" },
+                serviceType: { value: "one-time" },
+                how_heard_answer: { value: "Vehicle Signage" }
+              },
+              payload: {},
+              sweepandgo_details: {}
+            }]
+          };
         }
         return await super.query(sql, params);
       }
@@ -552,12 +581,106 @@ describe("dashboard KPI aggregation", () => {
       .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-24", end: "2026-07-24" }));
 
     assert.equal(summary.oneTimeCleanups, 1);
+    assert.deepEqual(summary.oneTimeCleanupSourceBreakdown, {
+      website_paid: 0,
+      website_organic: 0,
+      facebook: 0,
+      referral: 0,
+      truck_wrap: 1,
+      other_unknown: 0
+    });
+    assert.equal(summary.totalLeads, 18);
+    assert.equal(summary.otherLeads, 1);
+    assert.equal(summary.leadSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.closeRateMetrics.oneTimeCleanupReportingLeads, 1);
+    assert.equal(summary.closeRateMetrics.oneTimeCleanupConversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
     assert.equal(summary.totalActiveClients, 4);
     assert.equal(summary.newRecurringCustomers, 3);
     assert.equal(summary.churnRate, 0.4);
     assert.equal(summary.netRecurringCustomerGrowth, 2);
-    assert.equal(summary.closeRateMetrics.totalMatchedConversions, 3);
+    assert.equal(summary.closeRateMetrics.totalMatchedConversions, 4);
     assert.equal(summary.revenuePerHourMetrics.oneTimeCleanupRowsExcluded, 0);
+  });
+
+  it("dedupes same name, same address, same day one-time cleanup rows to one", async () => {
+    class DuplicateOneTimeCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              oneTimeCleanupIntakeRow({ fingerprint: "duplicate-a", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage" }),
+              oneTimeCleanupIntakeRow({ fingerprint: "duplicate-b", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage" })
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new DuplicateOneTimeCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+
+    assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
+    assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateGroups, 1);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 1);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.leadSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
+  });
+
+  it("does not dedupe one-time cleanups on different days", async () => {
+    class DifferentDayOneTimeCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              oneTimeCleanupIntakeRow({ date: "2026-07-25", fingerprint: "different-day-a", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage" }),
+              oneTimeCleanupIntakeRow({ date: "2026-07-26", fingerprint: "different-day-b", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage" })
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new DifferentDayOneTimeCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-25", end: "2026-07-26" }));
+
+    assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
+    assert.equal(summary.oneTimeCleanups, 2);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 0);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 2);
+  });
+
+  it("does not dedupe clearly separate same-day one-time visits with distinct visit IDs", async () => {
+    class DistinctVisitOneTimeCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              oneTimeCleanupIntakeRow({ fingerprint: "visit-a", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage", visitId: "visit-1" }),
+              oneTimeCleanupIntakeRow({ fingerprint: "visit-b", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage", visitId: "visit-2" })
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new DistinctVisitOneTimeCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+
+    assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
+    assert.equal(summary.oneTimeCleanups, 2);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 0);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 2);
   });
 
   it("maps a Search Engine plus Google new recurring customer to Website Paid without changing unrelated KPIs", async () => {
@@ -930,11 +1053,12 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.closeRateMetrics.facebookCloseRate, 0);
     assert.equal(summary.closeRateMetrics.totalCloseRate, 35.71);
     assert(summary.dataNotes.some((note) => note.includes("leads created before the selected period")));
-    assert(summary.dataNotes.some((note) => note.includes("new recurring customers in the selected period divided by leads created in the selected period")));
+    assert(summary.dataNotes.some((note) => note.includes("source-attributed closed signups in the selected period divided by source-attributed leads/signups")));
     assert(html.includes("New Recurring Customers"));
     assert(html.includes("Other/Unknown"));
     assert(html.includes("Prior-period lead"));
     assert(html.includes("Includes 1 prior-period lead conversion."));
+    assert(html.includes("One-time cleanup signups are included in close rate"));
   });
 
   it("updates Facebook and total close rates when Facebook recurring customers exist", async () => {
@@ -1573,6 +1697,33 @@ function completedJobRow(data: Record<string, unknown>) {
         ...data
       }
     }
+  };
+}
+
+function oneTimeCleanupIntakeRow(input: {
+  date?: string;
+  fingerprint: string;
+  name: string;
+  address: string;
+  source: string;
+  visitId?: string;
+}) {
+  return {
+    cleanup_date: input.date ?? "2026-07-26",
+    event_type: "client:client_onboarding_onetime",
+    trigger_event_fingerprint: input.fingerprint,
+    customer_email: null,
+    customer_name: input.name,
+    client_identifier: null,
+    service_type: "one-time",
+    verified_details: {
+      customerName: { value: input.name },
+      serviceAddress: { value: input.address },
+      serviceType: { value: "one-time" },
+      how_heard_answer: { value: input.source }
+    },
+    payload: input.visitId ? { visit_id: input.visitId } : {},
+    sweepandgo_details: {}
   };
 }
 

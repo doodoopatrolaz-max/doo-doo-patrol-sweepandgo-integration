@@ -95,7 +95,8 @@ function renderSummary(summary: DashboardSummary): string {
     {
       label: "One-Time Cleanups",
       value: String(summary.oneTimeCleanups),
-      note: summary.oneTimeCleanupsReason
+      note: summary.oneTimeCleanupsReason,
+      breakdown: detailedSourceBreakdownRows(summary.oneTimeCleanupSourceBreakdown)
     },
     {
       label: "Total Leads",
@@ -120,8 +121,8 @@ function renderSummary(summary: DashboardSummary): string {
         value: maybePercent(summary.closeRateMetrics.sourceBreakdown[bucket].closeRate)
       })),
       note: summary.priorPeriodLeadConversions > 0
-        ? `Includes ${summary.priorPeriodLeadConversions} prior-period lead conversion${summary.priorPeriodLeadConversions === 1 ? "" : "s"}.`
-        : undefined
+        ? `Includes ${summary.priorPeriodLeadConversions} prior-period lead conversion${summary.priorPeriodLeadConversions === 1 ? "" : "s"}. One-time cleanup signups are included in close rate; recurring customer count remains separate.`
+        : "Close rate includes recurring customer signups and one-time cleanup signups in the selected period. Recurring customer count remains separate."
     },
     {
       label: "Churn Rate",

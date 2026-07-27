@@ -19,6 +19,8 @@ export type DashboardSummary = {
   totalActiveClientsNeedsVerification: boolean;
   oneTimeCleanups: number;
   oneTimeCleanupsReason: string;
+  oneTimeCleanupMetrics: DashboardOneTimeCleanupMetrics;
+  oneTimeCleanupSourceBreakdown: DashboardDetailedSourceBreakdown;
   newRecurringCustomers: number;
   newRecurringCustomerBreakdown: DashboardSourceBreakdown;
   newRecurringCustomerSourceBreakdown: DashboardDetailedSourceBreakdown;
@@ -82,6 +84,8 @@ export type DashboardCloseRateMetrics = {
   totalMatchedConversions: number;
   manualReviewConversions: number;
   directSignupReportingLeads: number;
+  oneTimeCleanupReportingLeads: number;
+  oneTimeCleanupConversions: number;
   facebookPriorPeriodLeadConversions: number;
   websitePriorPeriodLeadConversions: number;
   totalPriorPeriodLeadConversions: number;
@@ -97,6 +101,14 @@ export type DashboardSourceCloseRateRow = {
   leads: number;
   conversions: number;
   closeRate: number | null;
+};
+
+export type DashboardOneTimeCleanupMetrics = {
+  rawRows: number;
+  dedupedCount: number;
+  duplicateGroups: number;
+  duplicateRowsRemoved: number;
+  sourceBreakdown: DashboardDetailedSourceBreakdown;
 };
 
 export type DashboardRevenuePerHourMetrics = {

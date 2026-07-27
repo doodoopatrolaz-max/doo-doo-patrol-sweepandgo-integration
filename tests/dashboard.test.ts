@@ -733,6 +733,42 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
   });
 
+  it("uses matched new-client email evidence for one-time cleanup source attribution", async () => {
+    class EmailEvidenceOneTimeCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("to_regclass('public.sweepandgo_new_client_email_sources')")) {
+          return { rows: [{ table_name: "sweepandgo_new_client_email_sources" }] };
+        }
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              {
+                ...oneTimeCleanupIntakeRow({ fingerprint: "email-source", name: "Test Cleanup", address: "123 Test St", source: "" }),
+                email_source_evidence: [{
+                  email_source: "sweepandgo_new_client_email",
+                  source_confidence: "owner_email_evidence",
+                  clean_up_frequency: "One Time",
+                  how_heard_about_us: "Vehicle Signage"
+                }]
+              }
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new EmailEvidenceOneTimeCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+
+    assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.leadSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.leads, 1);
+    assert.equal(summary.newRecurringCustomers, 3);
+  });
+
   it("maps a Search Engine plus Google new recurring customer to Website Paid without changing unrelated KPIs", async () => {
     class GoogleSearchNewRecurringPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

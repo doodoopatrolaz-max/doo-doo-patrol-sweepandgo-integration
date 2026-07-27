@@ -1066,6 +1066,29 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async oneTimeCleanupSignupRows(range: DashboardDateRange): Promise<OneTimeCleanupSignup[]> {
+    const hasEmailSourceEvidenceTable = await this.hasEmailSourceEvidenceTable();
+    const emailSourceEvidenceSelect = hasEmailSourceEvidenceTable
+      ? "COALESCE(email_sources.source_evidence, '[]'::jsonb) AS email_source_evidence"
+      : "'[]'::jsonb AS email_source_evidence";
+    const emailSourceEvidenceJoin = hasEmailSourceEvidenceTable
+      ? `LEFT JOIN LATERAL (
+         SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'email_source', email_source,
+                    'source_confidence', source_confidence,
+                    'clean_up_frequency', clean_up_frequency,
+                    'how_heard_about_us', how_heard_about_us,
+                    'how_heard_about_us_details', how_heard_about_us_details,
+                    'source_bucket', source_bucket,
+                    'email_received_at', email_received_at,
+                    'source_evidence_captured_at', updated_at
+                  )
+                ) AS source_evidence
+         FROM sweepandgo_new_client_email_sources es
+         WHERE es.onboarding_intake_id = oi.id
+           AND es.match_status = 'matched'
+       ) email_sources ON TRUE`
+      : "";
     const result = await this.pool.query(
       `SELECT /* one_time_cleanup_reporting_rows */
               (COALESCE(we.received_at, oi.created_at) AT TIME ZONE '${DASHBOARD_REPORTING_TIME_ZONE}')::date::text AS cleanup_date,
@@ -1078,9 +1101,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
               oi.verified_details,
               oi.payload,
               we.payload AS webhook_payload,
-              oi.sweepandgo_details
+              oi.sweepandgo_details,
+              ${emailSourceEvidenceSelect}
        FROM onboarding_intakes oi
        LEFT JOIN webhook_events we ON we.id = oi.webhook_event_id
+       ${emailSourceEvidenceJoin}
        WHERE (COALESCE(we.received_at, oi.created_at) AT TIME ZONE '${DASHBOARD_REPORTING_TIME_ZONE}')::date BETWEEN $1::date AND $2::date
          AND (
            oi.event_type = 'client:client_onboarding_onetime'
@@ -1114,6 +1139,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     }
 
     return [...grouped.values()];
+  }
+
+  private async hasEmailSourceEvidenceTable(): Promise<boolean> {
+    const result = await this.pool.query("SELECT to_regclass('public.sweepandgo_new_client_email_sources') AS table_name");
+    return Boolean(result.rows[0]?.table_name);
   }
 }
 
@@ -1422,7 +1452,8 @@ function oneTimeCleanupSourceInput(row: Record<string, unknown>): Record<string,
       verified_details: row.verified_details,
       payload: row.payload,
       webhook_payload: row.webhook_payload,
-      sweepandgo_details: row.sweepandgo_details
+      sweepandgo_details: row.sweepandgo_details,
+      email_source_evidence: row.email_source_evidence
     }
   };
 }

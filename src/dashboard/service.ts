@@ -1077,6 +1077,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
               oi.service_type,
               oi.verified_details,
               oi.payload,
+              we.payload AS webhook_payload,
               oi.sweepandgo_details
        FROM onboarding_intakes oi
        LEFT JOIN webhook_events we ON we.id = oi.webhook_event_id
@@ -1420,6 +1421,7 @@ function oneTimeCleanupSourceInput(row: Record<string, unknown>): Record<string,
       service_type: row.service_type,
       verified_details: row.verified_details,
       payload: row.payload,
+      webhook_payload: row.webhook_payload,
       sweepandgo_details: row.sweepandgo_details
     }
   };

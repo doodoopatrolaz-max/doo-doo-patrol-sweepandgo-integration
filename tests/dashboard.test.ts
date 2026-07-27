@@ -633,6 +633,31 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
   });
 
+  it("uses linked webhook payload fields for one-time cleanup dedupe when intake fields are sparse", async () => {
+    class SparseIntakeOneTimeCleanupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              oneTimeCleanupIntakeRow({ fingerprint: "sparse-a", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage", sparseIntake: true }),
+              oneTimeCleanupIntakeRow({ fingerprint: "sparse-b", name: "Test Cleanup", address: "123 Test St", source: "Vehicle Signage", sparseIntake: true })
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new SparseIntakeOneTimeCleanupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-26", end: "2026-07-26" }));
+
+    assert.equal(summary.oneTimeCleanupMetrics.rawRows, 2);
+    assert.equal(summary.oneTimeCleanups, 1);
+    assert.equal(summary.oneTimeCleanupMetrics.duplicateRowsRemoved, 1);
+    assert.equal(summary.oneTimeCleanupSourceBreakdown.truck_wrap, 1);
+  });
+
   it("does not dedupe one-time cleanups on different days", async () => {
     class DifferentDayOneTimeCleanupPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
@@ -1707,22 +1732,30 @@ function oneTimeCleanupIntakeRow(input: {
   address: string;
   source: string;
   visitId?: string;
+  sparseIntake?: boolean;
 }) {
   return {
     cleanup_date: input.date ?? "2026-07-26",
     event_type: "client:client_onboarding_onetime",
     trigger_event_fingerprint: input.fingerprint,
     customer_email: null,
-    customer_name: input.name,
+    customer_name: input.sparseIntake ? null : input.name,
     client_identifier: null,
     service_type: "one-time",
-    verified_details: {
+    verified_details: input.sparseIntake ? {} : {
       customerName: { value: input.name },
       serviceAddress: { value: input.address },
       serviceType: { value: "one-time" },
       how_heard_answer: { value: input.source }
     },
     payload: input.visitId ? { visit_id: input.visitId } : {},
+    webhook_payload: {
+      data: {
+        customer_name: input.name,
+        service_address: input.address,
+        how_heard_answer: input.source
+      }
+    },
     sweepandgo_details: {}
   };
 }

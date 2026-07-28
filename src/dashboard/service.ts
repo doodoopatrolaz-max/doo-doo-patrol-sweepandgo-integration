@@ -1057,12 +1057,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       [range.startDate, range.endDate]
     );
 
-    return result.rows
-      .filter(hasDirectSignupSourceEvidence)
-      .map((row) => ({
-        ...row,
-        reportingLeadType: "direct_recurring_signup"
-      }));
+    return result.rows.map((row) => ({
+      ...row,
+      reportingLeadType: "direct_recurring_signup"
+    }));
   }
 
   private async oneTimeCleanupSignupRows(range: DashboardDateRange): Promise<OneTimeCleanupSignup[]> {
@@ -1334,39 +1332,6 @@ function sumDetailed(breakdown: DashboardDetailedSourceBreakdown | undefined): n
     return 0;
   }
   return DASHBOARD_SOURCE_BUCKETS.reduce((sum, bucket) => sum + breakdown[bucket], 0);
-}
-
-function hasDirectSignupSourceEvidence(row: Record<string, unknown>): boolean {
-  const metadata = asRecord(row.metadata);
-  if (
-    metadata &&
-    (
-      stringValue(metadata.sourceEvidenceField) ||
-      stringValue(metadata.sourceDetail) ||
-      stringValue(metadata.how_heard_answer) ||
-      stringValue(metadata.how_heard_about_us) ||
-      stringValue(metadata.how_heard_about_us_details)
-    )
-  ) {
-    return true;
-  }
-
-  const sourceEvidence = parseJsonMaybe(row.source_evidence);
-  if (Array.isArray(sourceEvidence)) {
-    return sourceEvidence.length > 0 && sourceEvidence.some((entry) => {
-      const evidence = asRecord(entry);
-      if (!evidence) {
-        return false;
-      }
-      return (
-        stringValue(evidence.source) ||
-        stringValue(evidence.source_raw) ||
-        asRecord(evidence.evidence) !== undefined
-      );
-    });
-  }
-
-  return false;
 }
 
 function oneTimeCleanupDedupeKey(row: Record<string, unknown>, cleanupDate: string): string {
@@ -1794,17 +1759,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
-}
-
-function parseJsonMaybe(value: unknown): unknown {
-  if (typeof value !== "string") {
-    return value;
-  }
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
 }
 
 function identifierValue(value: unknown): string | undefined {

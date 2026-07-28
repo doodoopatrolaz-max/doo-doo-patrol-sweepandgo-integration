@@ -898,7 +898,58 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
   });
 
-  it("counts direct recurring signups in organic, referral, truck wrap, and unknown buckets when evidence exists", async () => {
+  it("uses Vehicle Signage email evidence for direct recurring Truck Wrap attribution", async () => {
+    class VehicleSignageNewRecurringPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: 95,
+              source_evidence: [{
+                source: "other",
+                source_raw: "Vehicle Signage",
+                source_provider: "sweepandgo_new_client_email",
+                evidence: {
+                  clean_up_frequency: "Twice Per Month",
+                  how_heard_about_us: "Vehicle Signage"
+                }
+              }]
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const baseline = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-28", end: "2026-07-28" }));
+    const summary = await new PostgresDashboardDataSource(new VehicleSignageNewRecurringPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-28", end: "2026-07-28" }));
+
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.leadSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.leadSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
+    assert.equal(summary.oneTimeCleanups, baseline.oneTimeCleanups);
+    assert.equal(summary.cancellations, baseline.cancellations);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
+    assert.equal(summary.revenuePerShiftHourMetrics.serviceRevenue, baseline.revenuePerShiftHourMetrics.serviceRevenue);
+  });
+
+  it("counts direct recurring signups in organic, referral, truck wrap, and unknown buckets", async () => {
     class DirectSignupBucketsPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
@@ -934,7 +985,7 @@ describe("dashboard KPI aggregation", () => {
                 source_raw: "unknown",
                 metadata: {},
                 monthly_recurring_revenue: null,
-                source_evidence: [{ source: "unknown", source_raw: "unknown", evidence: { source_status: "needs_review" } }]
+                source_evidence: []
               }
             ]
           };
@@ -960,6 +1011,41 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.closeRate, 100);
     assert.equal(summary.closeRateMetrics.sourceBreakdown.referral.closeRate, 100);
     assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.other_unknown.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
+  });
+
+  it("keeps unknown direct recurring signups out of no-data close-rate state", async () => {
+    class UnknownDirectSignupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: null,
+              source_evidence: []
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new UnknownDirectSignupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-28", end: "2026-07-28" }));
+
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.leadSourceBreakdown.other_unknown, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.other_unknown, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.other_unknown.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.other_unknown.conversions, 1);
     assert.equal(summary.closeRateMetrics.sourceBreakdown.other_unknown.closeRate, 100);
     assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
   });
@@ -1133,6 +1219,9 @@ describe("dashboard KPI aggregation", () => {
     class JulyWebsiteCloseRatePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
+        if (sql.includes("direct_signup_reporting_leads")) {
+          return { rows: [] };
+        }
         if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
           return {
             rows: Array.from({ length: 14 }, () => ({
@@ -1213,6 +1302,9 @@ describe("dashboard KPI aggregation", () => {
     class FutureFacebookCloseRatePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
+        if (sql.includes("direct_signup_reporting_leads")) {
+          return { rows: [] };
+        }
         if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
           return {
             rows: [

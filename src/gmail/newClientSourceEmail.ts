@@ -48,7 +48,7 @@ export type NewClientSourceMatch =
   | {
       status: "matched";
       candidate: NewClientSourceMatchCandidate;
-      matchMethod: "email_date" | "phone_date" | "external_sweepgo_id" | "name_address_date";
+      matchMethod: "email_date" | "phone_date" | "external_sweepgo_id" | "name_address_date" | "singleton_recurring_customer_date";
     }
   | {
       status: "needs_review";

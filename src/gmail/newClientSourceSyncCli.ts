@@ -1,6 +1,6 @@
 import { loadConfig } from "../config.ts";
 import { createPool } from "../db/pool.ts";
-import { isSweepAndGoNewClientEmail, parseSweepAndGoNewClientEmail } from "./newClientSourceEmail.ts";
+import { isOneTimeCleanupEmail, isSweepAndGoNewClientEmail, parseSweepAndGoNewClientEmail } from "./newClientSourceEmail.ts";
 import { PostgresNewClientSourceEmailStore } from "./newClientSourceStore.ts";
 import { createGmailReadOnlyClient, GmailReadOnlyClient } from "./readOnlyClient.ts";
 
@@ -74,12 +74,17 @@ async function main() {
       skippedExisting: 0
     };
 
-    for (const message of messages) {
-      if (!isSweepAndGoNewClientEmail(message)) {
-        continue;
-      }
+    const parsedMessages = messages
+      .filter(isSweepAndGoNewClientEmail)
+      .map(parseSweepAndGoNewClientEmail);
+    const recurringEmailCountsByDate = recurringSourceEmailCountsByDate(parsedMessages);
+
+    for (const parsed of parsedMessages) {
       summary.parsedMessages += 1;
-      const result = await store.apply(parseSweepAndGoNewClientEmail(message));
+      const result = await store.apply(parsed, {
+        allowSingletonRecurringDateFallback: !isOneTimeCleanupEmail(parsed) &&
+          recurringEmailCountsByDate.get(parsed.phoenixBusinessDate) === 1
+      });
       if (result.status === "matched") {
         summary.matched += 1;
       } else if (result.status === "needs_review") {
@@ -104,6 +109,19 @@ async function main() {
   } finally {
     await pool.end();
   }
+}
+
+function recurringSourceEmailCountsByDate(
+  parsedMessages: Array<ReturnType<typeof parseSweepAndGoNewClientEmail>>
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const parsed of parsedMessages) {
+    if (isOneTimeCleanupEmail(parsed)) {
+      continue;
+    }
+    counts.set(parsed.phoenixBusinessDate, (counts.get(parsed.phoenixBusinessDate) ?? 0) + 1);
+  }
+  return counts;
 }
 
 async function startSyncRun(pool: any, metadata: Record<string, unknown>): Promise<string> {

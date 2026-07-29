@@ -21,6 +21,10 @@ export type NewClientSourceApplyResult = {
   reviewReason?: string;
 };
 
+export type NewClientSourceApplyOptions = {
+  allowSingletonRecurringDateFallback?: boolean;
+};
+
 export class PostgresNewClientSourceEmailStore {
   private readonly pool: Queryable;
 
@@ -35,7 +39,7 @@ export class PostgresNewClientSourceEmailStore {
     return matchNewClientSourceEmail(parsed, candidates);
   }
 
-  async apply(parsed: ParsedSweepAndGoNewClientEmail): Promise<NewClientSourceApplyResult> {
+  async apply(parsed: ParsedSweepAndGoNewClientEmail, options: NewClientSourceApplyOptions = {}): Promise<NewClientSourceApplyResult> {
     const existing = await this.pool.query(
       `SELECT match_status
        FROM sweepandgo_new_client_email_sources
@@ -48,7 +52,15 @@ export class PostgresNewClientSourceEmailStore {
       return { status: "skipped_existing", sourceBucket: parsed.sourceBucket };
     }
 
-    const match = await this.dryRun(parsed);
+    let match = await this.dryRun(parsed);
+    if (
+      match.status === "unmatched" &&
+      options.allowSingletonRecurringDateFallback &&
+      !isOneTimeCleanupEmail(parsed) &&
+      parsed.sourceBucket !== "other_unknown"
+    ) {
+      match = await this.singletonRecurringCustomerDateMatch(parsed) ?? match;
+    }
     const evidence = emailSourceEvidenceForStorage(parsed);
 
     if (match.status !== "matched") {
@@ -248,6 +260,36 @@ export class PostgresNewClientSourceEmailStore {
         JSON.stringify(input.evidence)
       ]
     );
+  }
+
+  private async singletonRecurringCustomerDateMatch(parsed: ParsedSweepAndGoNewClientEmail): Promise<NewClientSourceMatch | undefined> {
+    const [candidates, existingEvidence] = await Promise.all([
+      this.recurringCustomerCandidates(parsed),
+      this.pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM sweepandgo_new_client_email_sources
+         WHERE phoenix_business_date = $1::date
+           AND COALESCE(clean_up_frequency, '') NOT ILIKE '%one%time%'
+           AND gmail_message_id <> $2
+           AND message_fingerprint <> $3`,
+        [parsed.phoenixBusinessDate, parsed.messageId, parsed.messageFingerprint]
+      )
+    ]);
+
+    const sameDateCandidates = candidates.filter((candidate) => (
+      candidate.businessDate === parsed.phoenixBusinessDate &&
+      !candidate.hasExistingSourceEvidence
+    ));
+    const existingEvidenceCount = Number(existingEvidence.rows[0]?.count ?? 0);
+    if (sameDateCandidates.length !== 1 || existingEvidenceCount !== 0) {
+      return undefined;
+    }
+
+    return {
+      status: "matched",
+      candidate: sameDateCandidates[0],
+      matchMethod: "singleton_recurring_customer_date"
+    };
   }
 
   private async upsertCustomerSource(

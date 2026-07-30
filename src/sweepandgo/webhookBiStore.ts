@@ -15,6 +15,12 @@ export type SweepAndGoCustomerUpsertInput = {
   source: NormalizedCustomerSource;
   sourceRaw?: string;
   firstRecurringDate?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactFullName?: string;
+  serviceAddress?: string;
   metadata: Record<string, unknown>;
 };
 
@@ -73,14 +79,53 @@ export class PostgresSweepAndGoWebhookBiStore implements SweepAndGoWebhookBiStor
 
   async upsertCustomer(input: SweepAndGoCustomerUpsertInput): Promise<ExistingSweepAndGoCustomer> {
     const contactResult = await this.pool.query(
-      `INSERT INTO contacts (external_sweepgo_id, metadata)
-       VALUES ($1, $2::jsonb)
+      `INSERT INTO contacts (
+          external_sweepgo_id,
+          primary_email,
+          primary_phone,
+          first_name,
+          last_name,
+          full_name,
+          service_address,
+          metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
        ON CONFLICT (external_sweepgo_id)
-       DO UPDATE SET metadata = contacts.metadata || EXCLUDED.metadata,
+       DO UPDATE SET primary_email = CASE
+                       WHEN (contacts.primary_email IS NULL OR contacts.primary_email = '') AND EXCLUDED.primary_email IS NOT NULL THEN EXCLUDED.primary_email
+                       ELSE contacts.primary_email
+                     END,
+                     primary_phone = CASE
+                       WHEN (contacts.primary_phone IS NULL OR contacts.primary_phone = '') AND EXCLUDED.primary_phone IS NOT NULL THEN EXCLUDED.primary_phone
+                       ELSE contacts.primary_phone
+                     END,
+                     first_name = CASE
+                       WHEN (contacts.first_name IS NULL OR contacts.first_name = '') AND EXCLUDED.first_name IS NOT NULL THEN EXCLUDED.first_name
+                       ELSE contacts.first_name
+                     END,
+                     last_name = CASE
+                       WHEN (contacts.last_name IS NULL OR contacts.last_name = '') AND EXCLUDED.last_name IS NOT NULL THEN EXCLUDED.last_name
+                       ELSE contacts.last_name
+                     END,
+                     full_name = CASE
+                       WHEN (contacts.full_name IS NULL OR contacts.full_name = '') AND EXCLUDED.full_name IS NOT NULL THEN EXCLUDED.full_name
+                       ELSE contacts.full_name
+                     END,
+                     service_address = CASE
+                       WHEN (contacts.service_address IS NULL OR contacts.service_address = '') AND EXCLUDED.service_address IS NOT NULL THEN EXCLUDED.service_address
+                       ELSE contacts.service_address
+                     END,
+                     metadata = contacts.metadata || EXCLUDED.metadata,
                      updated_at = NOW()
        RETURNING id`,
       [
         input.externalCustomerId,
+        input.contactEmail ?? null,
+        input.contactPhone ?? null,
+        input.contactFirstName ?? null,
+        input.contactLastName ?? null,
+        input.contactFullName ?? null,
+        input.serviceAddress ?? null,
         JSON.stringify({
           provider: "sweepandgo",
           lastSweepAndGoWebhookAt: new Date().toISOString()
@@ -151,7 +196,13 @@ export class PostgresSweepAndGoWebhookBiStore implements SweepAndGoWebhookBiStor
           input.source,
           input.sourceRaw ?? null,
           input.source === "unknown" ? 0.2 : 0.8,
-          JSON.stringify({ source: "sweepandgo_webhook", rawPresent: Boolean(input.sourceRaw) })
+          JSON.stringify({
+            source: "sweepandgo_webhook",
+            source_raw: input.sourceRaw,
+            sourceEvidenceField: input.metadata.sourceEvidenceField,
+            sourceDetail: input.metadata.sourceDetail,
+            rawPresent: Boolean(input.sourceRaw)
+          })
         ]
       );
     }

@@ -22,6 +22,12 @@ type ParsedSweepAndGoWebhook = {
   sourceRaw?: string;
   sourceEvidenceField?: string;
   sourceDetail?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactFullName?: string;
+  serviceAddress?: string;
   eventTimestamp: string;
   eventDate: string;
   terminationReason?: string;
@@ -150,6 +156,7 @@ export class SweepAndGoWebhookBiProcessor implements WebhookProcessor {
       source: parsed.source,
       sourceRaw: parsed.sourceRaw,
       firstRecurringDate: parsed.eventDate,
+      ...contactInput(parsed),
       metadata: eventMetadata(parsed, event, {
         hasActiveSubscription: true,
         firstRecurringDateEvidence: "client_onboarding_recurring_webhook",
@@ -182,6 +189,7 @@ export class SweepAndGoWebhookBiProcessor implements WebhookProcessor {
       statusUpdateMode,
       source: parsed.source,
       sourceRaw: parsed.sourceRaw,
+      ...contactInput(parsed),
       metadata: eventMetadata(parsed, event, {
         firstRecurringDateNotSetFromEvent: true,
         mrrDeferred: true
@@ -286,10 +294,101 @@ export function parseSweepAndGoWebhook(event: WebhookEvent): ParsedSweepAndGoWeb
       root.sourceDetail,
       root.source_details
     ]),
+    contactEmail: normalizeEmail(firstString([
+      data.email,
+      data.email_address,
+      data.client_email,
+      data.customer_email,
+      data.your_email_address,
+      root.email,
+      root.email_address,
+      root.client_email,
+      root.customer_email,
+      root.your_email_address
+    ])),
+    contactPhone: normalizePhone(firstString([
+      data.cell_phone,
+      data.cell_phone_number,
+      data.mobile_phone,
+      data.mobile,
+      data.phone,
+      data.phone_number,
+      data.customer_phone,
+      data.client_phone,
+      root.cell_phone,
+      root.cell_phone_number,
+      root.mobile_phone,
+      root.mobile,
+      root.phone,
+      root.phone_number,
+      root.customer_phone,
+      root.client_phone
+    ])),
+    contactFirstName: firstString([
+      data.first_name,
+      data.firstName,
+      data.firstname,
+      root.first_name,
+      root.firstName,
+      root.firstname
+    ]),
+    contactLastName: firstString([
+      data.last_name,
+      data.lastName,
+      data.lastname,
+      root.last_name,
+      root.lastName,
+      root.lastname
+    ]),
+    contactFullName: firstString([
+      data.full_name,
+      data.fullName,
+      data.name,
+      data.client_name,
+      data.customer_name,
+      root.full_name,
+      root.fullName,
+      root.name,
+      root.client_name,
+      root.customer_name
+    ]),
+    serviceAddress: firstString([
+      data.service_address,
+      data.home_address,
+      data.street_address,
+      data.address,
+      root.service_address,
+      root.home_address,
+      root.street_address,
+      root.address
+    ]),
     eventTimestamp,
     eventDate: phoenixDate(eventTimestamp),
     terminationReason: firstString([data.termination_reason, data.cancel_reason, data.cancellation_reason]),
     serviceFrequency: firstString([data.billing_interval, data.clean_up_frequency, data.frequency])
+  };
+}
+
+function contactInput(parsed: ParsedSweepAndGoWebhook): {
+  contactEmail?: string;
+  contactPhone?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactFullName?: string;
+  serviceAddress?: string;
+} {
+  const joinedName = [parsed.contactFirstName, parsed.contactLastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const fullName = parsed.contactFullName ?? (joinedName || undefined);
+  return {
+    contactEmail: parsed.contactEmail,
+    contactPhone: parsed.contactPhone,
+    contactFirstName: parsed.contactFirstName,
+    contactLastName: parsed.contactLastName,
+    contactFullName: fullName,
+    serviceAddress: parsed.serviceAddress
   };
 }
 
@@ -363,6 +462,19 @@ function normalizeTimestamp(value: string | undefined, fallback: string): string
   return Number.isFinite(parsedFallback.getTime())
     ? parsedFallback.toISOString()
     : new Date().toISOString();
+}
+
+function normalizeEmail(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized) ? normalized : undefined;
+}
+
+function normalizePhone(value: string | undefined): string | undefined {
+  const digits = value?.replace(/\D/g, "");
+  if (!digits) {
+    return undefined;
+  }
+  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
 }
 
 function phoenixDate(isoTimestamp: string): string {

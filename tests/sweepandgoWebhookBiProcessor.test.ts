@@ -16,12 +16,14 @@ class InMemoryBiStore implements SweepAndGoWebhookBiStore {
   services = new Map<string, SweepAndGoServiceUpsertInput>();
   cancellations = new Map<string, SweepAndGoCancellationInput>();
   issues = new Map<string, SweepAndGoReconciliationIssueInput>();
+  customerInputs = new Map<string, SweepAndGoCustomerUpsertInput>();
 
   async findCustomer(externalCustomerId: string) {
     return this.customers.get(externalCustomerId);
   }
 
   async upsertCustomer(input: SweepAndGoCustomerUpsertInput) {
+    this.customerInputs.set(input.externalCustomerId, input);
     const existing = this.customers.get(input.externalCustomerId);
     const status = input.statusUpdateMode === "overwrite" || !existing || existing.status === "unknown"
       ? input.status ?? existing?.status ?? "unknown"
@@ -109,6 +111,34 @@ describe("Sweep&Go webhook BI processor", () => {
     assert.equal(customer?.source, "website");
     assert.equal(customer?.firstRecurringDate, "2026-06-22");
     assert.equal(customer?.metadata.sourceDetail, "direct_signup");
+  });
+
+  it("passes recurring onboarding contact fields as blank-only match keys", async () => {
+    const store = new InMemoryBiStore();
+    const processor = new SweepAndGoWebhookBiProcessor(store);
+
+    await processor.process(webhook({
+      eventType: "client:client_onboarding_recurring",
+      payload: {
+        data: {
+          client: "client-contact-keys",
+          status: "active",
+          first_name: "Test",
+          last_name: "Customer",
+          email: "TEST.CUSTOMER@example.invalid",
+          cell_phone: "(555) 010-1234",
+          home_address: "123 Test St"
+        }
+      }
+    }));
+
+    const input = store.customerInputs.get("client-contact-keys");
+    assert.equal(input?.contactEmail, "test.customer@example.invalid");
+    assert.equal(input?.contactPhone, "5550101234");
+    assert.equal(input?.contactFirstName, "Test");
+    assert.equal(input?.contactLastName, "Customer");
+    assert.equal(input?.contactFullName, "Test Customer");
+    assert.equal(input?.serviceAddress, "123 Test St");
   });
 
   it("preserves Search Engine plus Google source details from recurring onboarding", async () => {

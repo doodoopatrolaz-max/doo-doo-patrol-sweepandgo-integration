@@ -36,11 +36,16 @@ export function normalizeExplicitCustomerSource(record: unknown): SourceNormaliz
     input.how_you_heard_about_us_details ??
     input.source_details
   );
-  if (isSearchEngineGooglePair(howHeardAnswer, howHeardDetails)) {
+  if (isSearchEngineSource(howHeardAnswer, howHeardDetails)) {
+    const sourceRaw = [howHeardAnswer, howHeardDetails].filter(Boolean).join(" / ");
     return {
       normalizedSource: "website",
-      rawSource: "Search Engine / Google",
-      evidenceField: "how_heard_answer+how_heard_about_us_details"
+      rawSource: sourceRaw || "Search Engine",
+      evidenceField: howHeardAnswer && howHeardDetails
+        ? "how_heard_answer+how_heard_about_us_details"
+        : howHeardAnswer
+          ? "how_heard_answer"
+          : "how_heard_about_us_details"
     };
   }
 
@@ -108,12 +113,10 @@ function normalizeExplicitSourceText(value: string): NormalizedCustomerSource {
   return "other";
 }
 
-function isSearchEngineGooglePair(answer: string | undefined, detail: string | undefined): boolean {
+function isSearchEngineSource(answer: string | undefined, detail: string | undefined): boolean {
   return Boolean(
-    answer &&
-    detail &&
-    /\b(search engine|google search)\b/i.test(answer) &&
-    /\bgoogle\b/i.test(detail)
+    (answer && /\b(search engine|google search)\b/i.test(answer)) ||
+    (detail && /\b(search engine|google search)\b/i.test(detail))
   );
 }
 

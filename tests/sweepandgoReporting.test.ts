@@ -64,6 +64,22 @@ describe("Sweep&Go reporting mapper", () => {
     assert.equal(mapped.sourceDetail, "Google");
   });
 
+  it("maps Search Engine without details from Sweep&Go customer rows", () => {
+    const mapped = mapSweepAndGoCustomer({
+      client: "rcl_SANITIZED_SEARCH_ENGINE",
+      status: "active",
+      subscription_names: "Weekly",
+      cleanup_frequency: "weekly",
+      how_heard_answer: "Search Engine"
+    });
+
+    assert(mapped);
+    assert.equal(mapped.source, "website");
+    assert.equal(mapped.sourceRaw, "Search Engine");
+    assert.equal(mapped.sourceEvidenceField, "how_heard_answer");
+    assert.equal(mapped.sourceDetail, undefined);
+  });
+
   it("does not count active clients without subscriptions as recurring customers", () => {
     const mapped = mapSweepAndGoCustomer({
       client: "rcl_SANITIZED",

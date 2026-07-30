@@ -35,6 +35,14 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.paidProof, false);
   });
 
+  it("maps Search Engine alone to Website Paid by owner-approved dashboard rule", () => {
+    const result = classifyDashboardSource({ how_heard_answer: "Search Engine" });
+
+    assert.equal(result.bucket, "website_paid");
+    assert.equal(result.googleSearchOnlyProof, true);
+    assert.equal(result.paidProof, false);
+  });
+
   it("maps Search Engine plus Google case-insensitively", () => {
     const result = classifyDashboardSource({
       how_heard_answer: "search engine",
@@ -63,13 +71,6 @@ describe("dashboard source attribution classifier", () => {
     const result = classifyDashboardSource({ lead_source: "website", source_detail: "direct_signup" });
 
     assert.equal(result.bucket, "website_organic");
-  });
-
-  it("does not treat Search Engine without Google detail as Website Paid", () => {
-    const result = classifyDashboardSource({ how_heard_answer: "Search Engine" });
-
-    assert.equal(result.bucket, "other_unknown");
-    assert.equal(result.googleSearchOnlyProof, false);
   });
 
   it("preserves Facebook over website signals", () => {

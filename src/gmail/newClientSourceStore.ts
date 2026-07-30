@@ -181,24 +181,51 @@ export class PostgresNewClientSourceEmailStore {
           ct.full_name,
           ct.first_name,
           ct.last_name,
-          ct.service_address
+          ct.service_address,
+          ct.metadata AS contact_metadata
        FROM customers c
        LEFT JOIN contacts ct ON ct.id = c.contact_id
        WHERE c.first_recurring_date BETWEEN ($1::date - INTERVAL '1 day') AND ($1::date + INTERVAL '1 day')`,
       [parsed.phoenixBusinessDate]
     );
 
-    return result.rows.map((row) => ({
-      id: String(row.id),
-      entityType: "recurring_customer",
-      businessDate: String(row.business_date),
-      email: stringValue(row.primary_email),
-      phone: stringValue(row.primary_phone),
-      name: stringValue(row.full_name) ?? [stringValue(row.first_name), stringValue(row.last_name)].filter(Boolean).join(" "),
-      address: stringValue(row.service_address),
-      externalSweepGoId: stringValue(row.external_sweepgo_id),
-      hasExistingSourceEvidence: Boolean(row.source_raw) || stringValue(row.source) !== "unknown"
-    }));
+    return result.rows.map((row) => {
+      const nameFromColumns = [stringValue(row.first_name), stringValue(row.last_name)]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+
+      return {
+        id: String(row.id),
+        entityType: "recurring_customer",
+        businessDate: String(row.business_date),
+        email: stringValue(row.primary_email) ?? findFirstNestedString(row, [
+          "email",
+          "email_address",
+          "client_email",
+          "customer_email",
+          "your_email_address"
+        ]),
+        phone: stringValue(row.primary_phone) ?? findFirstNestedString(row, [
+          "phone",
+          "phone_number",
+          "cell_phone",
+          "cell_phone_number",
+          "mobile",
+          "customer_phone",
+          "client_phone"
+        ]),
+        name: stringValue(row.full_name) ?? stringValue(nameFromColumns) ?? fullNameFromFields(row),
+        address: stringValue(row.service_address) ?? findFirstNestedString(row, [
+          "service_address",
+          "home_address",
+          "street_address",
+          "address"
+        ]),
+        externalSweepGoId: stringValue(row.external_sweepgo_id),
+        hasExistingSourceEvidence: Boolean(row.source_raw) || (stringValue(row.source) ?? "unknown") !== "unknown"
+      };
+    });
   }
 
   private async upsertEmailEvidence(

@@ -79,6 +79,20 @@ describe("Sweep&Go new-client email source capture", () => {
     assert.equal(parsed.sourceBucket, "website_paid");
   });
 
+  it("maps Search Engine without details to Website Paid", () => {
+    const parsed = parseSweepAndGoNewClientEmail({
+      ...baseEmail,
+      messageId: "msg-search-engine",
+      body: baseEmail.body
+        .replace("One Time", "Once A Week")
+        .replace("Vehicle Signage", "Search Engine")
+    });
+
+    assert.equal(parsed.howHeardAboutUs, "Search Engine");
+    assert.equal(parsed.howHeardAboutUsDetails, undefined);
+    assert.equal(parsed.sourceBucket, "website_paid");
+  });
+
   it("matches one-time cleanup email evidence by safe email/date keys", () => {
     const parsed = parseSweepAndGoNewClientEmail(baseEmail);
     const match = matchNewClientSourceEmail(parsed, [
@@ -107,6 +121,49 @@ describe("Sweep&Go new-client email source capture", () => {
 
     assert.equal(match.status, "matched");
     assert.equal(match.status === "matched" ? match.matchMethod : undefined, "phone_date");
+  });
+
+  it("matches recurring signup email evidence from stored customer metadata keys", async () => {
+    class MetadataRecurringPool {
+      readonly queries: Array<{ sql: string; params: unknown[] }> = [];
+
+      async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM customers c")) {
+          return {
+            rows: [{
+              id: "customer-1",
+              business_date: "2026-07-26",
+              external_sweepgo_id: "stable-client-1",
+              source: "unknown",
+              source_raw: null,
+              metadata: {
+                webhookPayload: {
+                  customer_email: "cleanup@example.invalid",
+                  cell_phone_number: "5550100",
+                  customer_name: "Test Customer",
+                  service_address: "123 Test St"
+                }
+              },
+              primary_email: null,
+              primary_phone: null,
+              full_name: null,
+              first_name: null,
+              last_name: null,
+              service_address: null,
+              contact_metadata: {}
+            }]
+          };
+        }
+        return { rows: [] };
+      }
+    }
+
+    const parsed = parseSweepAndGoNewClientEmail(searchEngineGoogleRecurringEmail());
+    const match = await new PostgresNewClientSourceEmailStore(new MetadataRecurringPool()).dryRun(parsed);
+
+    assert.equal(match.status, "matched");
+    assert.equal(match.status === "matched" ? match.matchMethod : undefined, "email_date");
   });
 
   it("routes multiple possible matches to needs review", () => {

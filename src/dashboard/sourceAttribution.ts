@@ -30,7 +30,7 @@ export const DASHBOARD_SOURCE_BUCKETS: DashboardSourceBucket[] = [
 ];
 
 export const DEFAULT_DASHBOARD_SOURCE_ATTRIBUTION_CONFIG: DashboardSourceAttributionConfig = {
-  // Owner-approved rule: Search Engine + Google is reported as Website Paid for dashboard attribution.
+  // Owner-approved rule: Search Engine is reported as Website Paid for dashboard attribution.
   googleSearchDefault: "website_paid"
 };
 
@@ -179,9 +179,10 @@ function hasGoogleSearchOnlyProof(flattened: EvidenceEntry[]): boolean {
   const answer = firstStringField(flattened, ["how_heard_answer", "how_heard_about_us", "how_you_heard_about_us"]);
   const detail = firstStringField(flattened, ["how_heard_about_us_details", "how_heard_details", "source_detail", "source_details"]);
   const combined = flattened.map((entry) => entry.value.toLowerCase()).join(" ");
-  return (
-    Boolean(answer && /\b(search engine|google search)\b/.test(answer) && detail && /\bgoogle\b/.test(detail)) ||
-    /\bsearch engine\b/.test(combined) && /\bgoogle\b/.test(combined)
+  return Boolean(
+    (answer && /\b(search engine|google search)\b/.test(answer)) ||
+    (detail && /\b(search engine|google search)\b/.test(detail)) ||
+    /\b(search engine|google search)\b/.test(combined)
   );
 }
 

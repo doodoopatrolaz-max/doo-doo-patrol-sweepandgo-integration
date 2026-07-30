@@ -133,6 +133,27 @@ describe("Sweep&Go webhook BI processor", () => {
     assert.equal(customer?.metadata.sourceDetail, "Google");
   });
 
+  it("preserves Search Engine without details from recurring onboarding", async () => {
+    const store = new InMemoryBiStore();
+    const processor = new SweepAndGoWebhookBiProcessor(store);
+
+    await processor.process(webhook({
+      eventType: "client:client_onboarding_recurring",
+      payload: {
+        data: {
+          client: "client-search-engine",
+          status: "active",
+          how_heard_answer: "Search Engine"
+        }
+      }
+    }));
+
+    const customer = store.customers.get("client-search-engine");
+    assert.equal(customer?.source, "website");
+    assert.equal(customer?.metadata.sourceEvidenceField, "how_heard_answer");
+    assert.equal(customer?.metadata.sourceDetail, undefined);
+  });
+
   it("sets first_recurring_date once", async () => {
     const store = new InMemoryBiStore();
     const processor = new SweepAndGoWebhookBiProcessor(store);

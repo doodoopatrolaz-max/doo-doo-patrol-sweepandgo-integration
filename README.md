@@ -87,6 +87,26 @@ Both commands read from Sweep&Go and upsert into the BI tables by provider recor
 
 The field discovery notes live in `SWEEPANDGO_FIELD_MAP.md`. Important current boundary: Sweep&Go payments are not treated as monthly recurring revenue. MRR remains unknown until a reliable recurring subscription amount field or endpoint is confirmed.
 
+## Sweep&Go Direct Signup Forwarding
+
+Direct Sweep&Go signup events are processed into BI first, then a sanitized normalized copy can be forwarded to KPI TRACKER's onboarding-complete route so GHL active-client records preserve trusted source attribution.
+
+Forwarded event types:
+
+```text
+client:client_onboarding_recurring
+client:client_onboarding_onetime
+```
+
+Required Railway variables for forwarding:
+
+```text
+LEADCONTEXT_ONBOARDING_COMPLETE_URL
+LEADCONTEXT_ONBOARDING_COMPLETE_SECRET
+```
+
+The forwarded payload includes `lead_source`, `original_source`, `source_detail = direct_signup`, and `dashboard_source_bucket` only when source evidence is explicit. Unknown source evidence remains unknown/needs review. This path does not change Sweep&Go, Gmail, Meta Ads, or Google Ads.
+
 ## GoHighLevel Lead Discovery
 
 Phase 3 adds a read-only GoHighLevel foundation. It does not connect Gmail, Meta Ads, or Google Ads, and it does not modify live GHL contacts, opportunities, pipelines, workflows, tags, automations, or stages.

@@ -59,6 +59,9 @@ export type AppConfig = {
   googleAdsApiBaseUrl: string;
   googleAdsOAuthTokenUrl: string;
   dashboardPassword?: string;
+  leadcontextWebsiteLeadUrl: string;
+  leadcontextOnboardingCompleteUrl: string;
+  leadcontextOnboardingCompleteSecret?: string;
 };
 
 function optionalEnv(name: string): string | undefined {
@@ -152,7 +155,16 @@ export function loadConfig(): AppConfig {
     googleAdsApiVersion: requiredEnv("GOOGLE_ADS_API_VERSION", "v24"),
     googleAdsApiBaseUrl: requiredEnv("GOOGLE_ADS_API_BASE_URL", "https://googleads.googleapis.com").replace(/\/+$/, ""),
     googleAdsOAuthTokenUrl: requiredEnv("GOOGLE_ADS_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
-    dashboardPassword: optionalEnv("DASHBOARD_PASSWORD")
+    dashboardPassword: optionalEnv("DASHBOARD_PASSWORD"),
+    leadcontextWebsiteLeadUrl: requiredEnv(
+      "LEADCONTEXT_WEBSITE_LEAD_URL",
+      "https://leadcontext-production.up.railway.app/webhooks/website/lead"
+    ),
+    leadcontextOnboardingCompleteUrl: requiredEnv(
+      "LEADCONTEXT_ONBOARDING_COMPLETE_URL",
+      "https://leadcontext-production.up.railway.app/webhooks/sweepgo/onboarding-complete"
+    ),
+    leadcontextOnboardingCompleteSecret: optionalEnv("LEADCONTEXT_ONBOARDING_COMPLETE_SECRET")
   };
 }
 

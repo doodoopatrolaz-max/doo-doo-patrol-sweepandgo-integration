@@ -47,7 +47,7 @@
 | Website quote leads | Count GoHighLevel leads/opportunities in configured website quote stage/source. |
 | Other leads | Count GoHighLevel leads not normalized as Facebook or website. |
 | New recurring customers | Count Sweep&Go customers whose recurring service starts in date range. |
-| New recurring customer source | Use Sweep&Go source when available; otherwise reconcile to GoHighLevel; otherwise `unknown`. |
+| New recurring customer source | Use Sweep&Go source when available; otherwise reconcile to GoHighLevel or Gmail source evidence; otherwise `unknown`. |
 | One-time cleanups | Count Sweep&Go one-time services in date range after exact fields are confirmed. |
 | Cancellations | Count Sweep&Go cancellations in date range. |
 | Cancellation reasons | Store raw reason and later normalize into reporting buckets. |
@@ -55,3 +55,12 @@
 | Monthly recurring revenue | Sum active recurring customer recurring revenue from Sweep&Go-confirmed pricing. |
 | Revenue added | Sum recurring revenue added by new recurring customers in date range. |
 | Net recurring customer growth | New recurring customers minus cancellations in date range. |
+
+## Direct Sweep&Go Signup Forwarding
+
+Direct Sweep&Go signup webhooks are still processed into the BI tables first. When the event is a trusted direct signup event, the BI service also forwards a sanitized normalized copy to KPI TRACKER's onboarding-complete route:
+
+- `client:client_onboarding_recurring`
+- `client:client_onboarding_onetime`
+
+The forwarded payload carries `lead_source`, `original_source`, `source_detail = direct_signup`, and the dashboard source bucket when source evidence is explicit. KPI TRACKER uses that evidence to update the GHL active-client path and source tags. Unknown source evidence stays unknown/needs review.

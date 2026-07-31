@@ -9,6 +9,7 @@ import { OnboardingWebhookProcessor } from "./onboarding/intake.ts";
 import { PostgresOnboardingIntakeStore } from "./onboarding/postgresStore.ts";
 import { startDailyDashboardScheduler } from "./reports/scheduler.ts";
 import { SweepAndGoClient } from "./sweepandgo/client.ts";
+import { SweepAndGoDirectSignupForwarder } from "./sweepandgo/directSignupForwarder.ts";
 import { SweepAndGoWebhookBiProcessor } from "./sweepandgo/webhookBiProcessor.ts";
 import { PostgresSweepAndGoWebhookBiStore } from "./sweepandgo/webhookBiStore.ts";
 import { GoHighLevelWebhookProcessor } from "./gohighlevel/webhookProcessor.ts";
@@ -34,6 +35,7 @@ const integrationEventStore = pool
 const onboardingStore = pool ? new PostgresOnboardingIntakeStore(pool) : new InMemoryOnboardingIntakeStore();
 const sweepandgoClient = new SweepAndGoClient(config);
 const onboardingWebhookProcessor = new OnboardingWebhookProcessor(onboardingStore, sweepandgoClient);
+const directSignupForwarder = new SweepAndGoDirectSignupForwarder(config);
 const gmailReadOnlyClient = createGmailReadOnlyClient(config);
 const gmailReadOnlyAvailability = new GmailReadOnlyClient(config).getAvailability();
 const webhookProcessor = pool
@@ -43,9 +45,10 @@ const webhookProcessor = pool
       new SweepAndGoNewClientSourceLookupProcessor({
         reader: gmailReadOnlyClient,
         store: new PostgresNewClientSourceEmailStore(pool)
-      })
+      }),
+      directSignupForwarder
     ])
-  : onboardingWebhookProcessor;
+  : new CompositeWebhookProcessor([onboardingWebhookProcessor, directSignupForwarder]);
 const goHighLevelWebhookProcessor = pool
   ? new GoHighLevelWebhookProcessor(new PostgresGoHighLevelWebhookStore(pool), config)
   : undefined;

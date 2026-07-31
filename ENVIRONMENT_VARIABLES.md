@@ -55,6 +55,14 @@ Do not commit real values. Use Railway variables for production secrets.
 | Replay timestamp header | Needs confirmation | Add timestamp tolerance only if HighLevel documents or exposes a timestamp header for this webhook source. |
 | Custom outbound header | Optional if UI supports it | If HighLevel workflow webhook action supports custom headers, use it for traceability only unless official signing is available. |
 
+## KPI TRACKER / Lead Context Builder Forwarding
+
+| Variable | Purpose | Phase | Notes |
+| --- | --- | --- | --- |
+| `LEADCONTEXT_WEBSITE_LEAD_URL` | Website quote lead forwarding endpoint in KPI TRACKER | Existing | Used for Sweep&Go `free:quote` forwarding. Store only the endpoint, never secrets. |
+| `LEADCONTEXT_ONBOARDING_COMPLETE_URL` | Direct Sweep&Go signup forwarding endpoint in KPI TRACKER | Direct signup attribution | Used for `client:client_onboarding_recurring` and `client:client_onboarding_onetime` so GHL active-client records can be created/refreshed with trusted source evidence. |
+| `LEADCONTEXT_ONBOARDING_COMPLETE_SECRET` | Shared request secret for the KPI TRACKER onboarding-complete route | Direct signup attribution secret | Must match KPI TRACKER `SWEEPGO_WEBHOOK_SECRET` when that route requires a secret. Store only in Railway/private env. |
+
 ## Ads Reporting Placeholders
 
 | Variable | Purpose | Phase | Notes |

@@ -261,7 +261,14 @@ export class PostgresNewClientSourceEmailStore {
        )
        VALUES ($1, $2, $3::timestamptz, $4::date, $5, $6, $7, $8, 'owner_email_evidence', $9, $10, $11::bigint, $12::uuid, $13, $14, $15::jsonb)
        ON CONFLICT (gmail_message_id)
-       DO UPDATE SET match_status = EXCLUDED.match_status,
+       DO UPDATE SET email_received_at = EXCLUDED.email_received_at,
+                     phoenix_business_date = EXCLUDED.phoenix_business_date,
+                     clean_up_frequency = EXCLUDED.clean_up_frequency,
+                     how_heard_about_us = EXCLUDED.how_heard_about_us,
+                     how_heard_about_us_details = EXCLUDED.how_heard_about_us_details,
+                     source_bucket = EXCLUDED.source_bucket,
+                     source_confidence = EXCLUDED.source_confidence,
+                     match_status = EXCLUDED.match_status,
                      matched_entity_type = EXCLUDED.matched_entity_type,
                      onboarding_intake_id = EXCLUDED.onboarding_intake_id,
                      customer_id = EXCLUDED.customer_id,

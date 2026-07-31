@@ -206,6 +206,36 @@ describe("Sweep&Go new-client email source capture", () => {
     assert.equal(pool.queries.length, 1);
   });
 
+  it("refreshes parsed source evidence when reprocessing an unmatched email", async () => {
+    class ExistingUnmatchedPool {
+      readonly queries: Array<{ sql: string; params: unknown[] }> = [];
+
+      async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM sweepandgo_new_client_email_sources")) {
+          return { rows: [{ match_status: "unmatched" }] };
+        }
+        return { rows: [] };
+      }
+    }
+
+    const pool = new ExistingUnmatchedPool();
+    const parsed = parseSweepAndGoNewClientEmail({
+      ...baseEmail,
+      messageId: "msg-existing-search-engine",
+      body: baseEmail.body
+        .replace("One Time", "Once A Week")
+        .replace("Vehicle Signage", "Search Engine")
+    });
+    const result = await new PostgresNewClientSourceEmailStore(pool).apply(parsed);
+    const upsert = pool.queries.find((query) => query.sql.includes("INSERT INTO sweepandgo_new_client_email_sources"));
+
+    assert.equal(result.status, "unmatched");
+    assert.equal(result.sourceBucket, "website_paid");
+    assert(upsert?.sql.includes("source_bucket = EXCLUDED.source_bucket"));
+    assert(upsert?.params.includes("website_paid"));
+  });
+
   it("matches duplicate one-time intake rows as one deduped cleanup candidate", async () => {
     class DuplicateOneTimePool {
       readonly queries: Array<{ sql: string; params: unknown[] }> = [];

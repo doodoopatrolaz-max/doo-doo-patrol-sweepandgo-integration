@@ -35,7 +35,7 @@ type LegacySource = keyof DashboardSourceBreakdown;
 const SOURCES: DashboardSourceRow["source"][] = DASHBOARD_SOURCE_BUCKETS;
 const DASHBOARD_LEAD_EXCLUSION_METRICS = "ARRAY['lead_denominator', 'dashboard_leads']";
 const DASHBOARD_REPORTING_TIME_ZONE = "America/Phoenix";
-export const TEMP_AVERAGE_MONTHLY_TICKET = 95;
+export const TEMP_AVERAGE_MONTHLY_TICKET = 92;
 const SWEEPGO_EMPLOYEE_NAMES: Record<string, string> = {
   "5501": "Bryan Long",
   "9638": "Alejandro Hinostroza",

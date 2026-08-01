@@ -303,7 +303,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
       costPerNewRecurringCustomerNote: "No new customers",
       estimatedActiveMrr: null,
       estimatedActiveMrrReason: undefined,
-      averageMonthlyTicket: 95,
+      averageMonthlyTicket: 92,
       averageMonthlyTicketReason: "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.",
       estimatedMrrAdded: null,
       cancellations: 0,
@@ -407,7 +407,7 @@ const summaryOnlyDataSource: DashboardDataSource = {
         },
         costPerNewCustomerStatus: "no_new_customers"
       },
-      dataNotes: ["Average Monthly Ticket is currently configured at $95.00."]
+      dataNotes: ["Average Monthly Ticket is currently configured at $92.00."]
     } satisfies DashboardSummary;
   },
   async getTrends() {
@@ -501,7 +501,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.costPerNewRecurringCustomerStatus, "available");
     assert.equal(summary.costPerNewRecurringCustomerNote, "Ad spend divided by new recurring customers");
     assert.equal(summary.estimatedActiveMrr, null);
-    assert.equal(summary.averageMonthlyTicket, 95);
+    assert.equal(summary.averageMonthlyTicket, 92);
     assert.equal(summary.estimatedMrrAdded, 90);
     assert.equal(summary.cancellations, 1);
     assert.deepEqual(summary.cancellationMetrics, {
@@ -515,7 +515,7 @@ describe("dashboard KPI aggregation", () => {
     });
     assert.equal(summary.churnRate, 5);
     assert.equal(summary.churnRateDenominator, 20);
-    assert.equal(summary.lifetimeValue, 1900);
+    assert.equal(summary.lifetimeValue, 1840);
     assert.equal(summary.averageRevenuePerHour, 260);
     assert.equal(summary.averageRevenuePerHourReason, "Recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring service time. Initial and one-time cleanups are excluded.");
     assert(summary.dataNotes.includes("Revenue Per Recurring Service Hour uses recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring service time. Initial, one-time, custom, missed, canceled, dispatched, and missing-price jobs are excluded."));
@@ -1073,7 +1073,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.costPerNewRecurringCustomer, 0);
     assert.equal(summary.costPerNewRecurringCustomerStatus, "no_ad_spend");
     assert.equal(summary.estimatedActiveMrr, null);
-    assert.equal(summary.averageMonthlyTicket, 95);
+    assert.equal(summary.averageMonthlyTicket, 92);
     assert.equal(summary.closeRateMetrics.totalMatchedConversions, 0);
     assert(summary.dataNotes.some((note) => note.includes("No database")));
   });
@@ -1099,7 +1099,7 @@ describe("dashboard KPI aggregation", () => {
     assert(html.indexOf("Total Ad Spend") < html.indexOf("Meta Spend"));
     assert(!html.includes("<span>Estimated MRR</span>"));
     assert(html.includes("<span>Average Monthly Ticket</span>"));
-    assert(html.includes("$95.00"));
+    assert(html.includes("$92.00"));
     assert(html.includes("As of latest Sweep&amp;Go active roster snapshot"));
     assert(html.includes("/assets/doo-doo-patrol-logo.png"));
     assert(html.includes("<dt>Website Paid</dt>"));
@@ -1152,7 +1152,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.totalActiveClientsNeedsVerification, false);
     assert.equal(summary.totalActiveClientsSource, "Latest Sweep&Go active roster snapshot from the official active client count.");
     assert.equal(summary.estimatedActiveMrr, null);
-    assert.equal(summary.averageMonthlyTicket, 95);
+    assert.equal(summary.averageMonthlyTicket, 92);
   });
 
   it("keeps MRR hidden while showing configured average ticket and revenue-per-hour notes", async () => {
@@ -1179,7 +1179,7 @@ describe("dashboard KPI aggregation", () => {
       .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
     const html = renderDashboard(dashboardData(summary));
 
-    assert.equal(summary.averageMonthlyTicket, 95);
+    assert.equal(summary.averageMonthlyTicket, 92);
     assert.equal(summary.estimatedActiveMrr, null);
     assert.equal(summary.averageMonthlyTicketReason, "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.");
     assert(html.includes("<span>Average Monthly Ticket</span>"));

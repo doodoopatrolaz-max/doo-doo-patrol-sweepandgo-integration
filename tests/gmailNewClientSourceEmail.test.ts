@@ -93,6 +93,22 @@ describe("Sweep&Go new-client email source capture", () => {
     assert.equal(parsed.sourceBucket, "website_paid");
   });
 
+  it("maps recurring Referred By Family Or Friend email evidence to Referral", () => {
+    const parsed = parseSweepAndGoNewClientEmail({
+      ...baseEmail,
+      messageId: "msg-referral-recurring",
+      body: baseEmail.body
+        .replace("One Time", "Once A Week")
+        .replace("Vehicle Signage", "Referred By Family Or Friend")
+        .concat("\n\nHow you heard about us details\n\nSafe Referrer")
+    });
+
+    assert.equal(parsed.cleanUpFrequency, "Once A Week");
+    assert.equal(parsed.howHeardAboutUs, "Referred By Family Or Friend");
+    assert.equal(parsed.howHeardAboutUsDetails, "Safe Referrer");
+    assert.equal(parsed.sourceBucket, "referral");
+  });
+
   it("matches one-time cleanup email evidence by safe email/date keys", () => {
     const parsed = parseSweepAndGoNewClientEmail(baseEmail);
     const match = matchNewClientSourceEmail(parsed, [

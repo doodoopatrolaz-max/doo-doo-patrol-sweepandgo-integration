@@ -104,6 +104,30 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.referralProof, true);
   });
 
+  it("maps Referred By Family Or Friend how-heard evidence to Referral", () => {
+    const result = classifyDashboardSource({
+      how_heard_about_us: "Referred By Family Or Friend",
+      how_heard_about_us_details: "Safe Referrer"
+    });
+
+    assert.equal(result.bucket, "referral");
+    assert.equal(result.referralProof, true);
+  });
+
+  it("maps Family or Friend source evidence to Referral", () => {
+    const result = classifyDashboardSource({ source_raw: "Family or Friend" });
+
+    assert.equal(result.bucket, "referral");
+    assert.equal(result.referralProof, true);
+  });
+
+  it("does not map unrelated comment text containing friend to Referral", () => {
+    const result = classifyDashboardSource({ internal_comment: "A friend helped fill this out." });
+
+    assert.equal(result.bucket, "other_unknown");
+    assert.equal(result.referralProof, false);
+  });
+
   it("maps truck wrap source to Truck Wrap", () => {
     const result = classifyDashboardSource({ how_heard_answer: "Saw your truck wrap" });
 

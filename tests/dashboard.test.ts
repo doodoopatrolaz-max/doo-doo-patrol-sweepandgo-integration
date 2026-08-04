@@ -949,6 +949,59 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerShiftHourMetrics.serviceRevenue, baseline.revenuePerShiftHourMetrics.serviceRevenue);
   });
 
+  it("uses referral email evidence for direct recurring Referral attribution without changing unrelated KPIs", async () => {
+    class ReferralNewRecurringPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: null,
+              source_evidence: [{
+                source: "other",
+                source_raw: "Referred By Family Or Friend",
+                source_provider: "sweepandgo_new_client_email",
+                evidence: {
+                  clean_up_frequency: "Once A Week",
+                  how_heard_about_us: "Referred By Family Or Friend",
+                  how_heard_about_us_details: "Safe Referrer"
+                }
+              }]
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const baseline = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-03", end: "2026-08-03" }));
+    const summary = await new PostgresDashboardDataSource(new ReferralNewRecurringPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-03", end: "2026-08-03" }));
+
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.leadSourceBreakdown.referral, 1);
+    assert.equal(summary.leadSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.referral, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.referral.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.referral.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.referral.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
+    assert.equal(summary.oneTimeCleanups, baseline.oneTimeCleanups);
+    assert.equal(summary.cancellations, baseline.cancellations);
+    assert.equal(summary.totalActiveClients, baseline.totalActiveClients);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
+    assert.equal(summary.revenuePerShiftHourMetrics.serviceRevenue, baseline.revenuePerShiftHourMetrics.serviceRevenue);
+  });
+
   it("counts direct recurring signups in organic, referral, truck wrap, and unknown buckets", async () => {
     class DirectSignupBucketsPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

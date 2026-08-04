@@ -35,6 +35,27 @@ export const DEFAULT_DASHBOARD_SOURCE_ATTRIBUTION_CONFIG: DashboardSourceAttribu
 };
 
 const PAID_UTM_MEDIUMS = new Set(["cpc", "ppc", "paid", "paid_search", "paid-search", "ads", "ad", "adwords", "google_ads", "google-ads"]);
+const REFERRAL_SOURCE_FIELD_NAMES = new Set([
+  "source",
+  "source_raw",
+  "customer_source",
+  "acquisition_source",
+  "lead_source",
+  "original_source",
+  "original_lead_source",
+  "how_heard_answer",
+  "how_heard_about_us",
+  "how_you_heard_about_us",
+  "how_heard_about_us_details",
+  "how_heard_details",
+  "source_detail",
+  "source_details",
+  "tracking_field"
+]);
+const REFERRAL_SOURCE_PROOF_PATTERN =
+  /\b(referral|referred|referred by|family or friend|family\/friend|family friend|personal referral|word of mouth|word-of-mouth|neighbor|friend|family)\b/;
+const REFERRAL_DETAIL_PROOF_PATTERN =
+  /\b(referral|referred|referred by|family or friend|family\/friend|family friend|personal referral|word of mouth|word-of-mouth)\b/;
 
 export function emptyDetailedSourceBreakdown(): DashboardDetailedSourceBreakdown {
   return {
@@ -67,7 +88,7 @@ export function classifyDashboardSource(
     return sourceResult("website_paid", flattened, { paidProof: true });
   }
 
-  const referralProof = /\b(referral|referred|referred by|friend|neighbor|word of mouth|word-of-mouth)\b/.test(text);
+  const referralProof = hasReferralProof(flattened);
   if (referralProof) {
     return sourceResult("referral", flattened, { referralProof: true });
   }
@@ -186,6 +207,26 @@ function hasGoogleSearchOnlyProof(flattened: EvidenceEntry[]): boolean {
   );
 }
 
+function hasReferralProof(flattened: EvidenceEntry[]): boolean {
+  return flattened.some((entry) => {
+    const key = lastPathKey(entry.path);
+    const value = entry.value.trim().toLowerCase();
+    if (!value) {
+      return false;
+    }
+    if (entry.path.toLowerCase().includes("tag") && /\b(referral|referred)\b/.test(value)) {
+      return true;
+    }
+    if (!REFERRAL_SOURCE_FIELD_NAMES.has(key)) {
+      return false;
+    }
+    if (key.includes("detail")) {
+      return REFERRAL_DETAIL_PROOF_PATTERN.test(value);
+    }
+    return REFERRAL_SOURCE_PROOF_PATTERN.test(value);
+  });
+}
+
 function paidMediumExists(flattened: EvidenceEntry[]): boolean {
   return flattened.some((entry) => entry.path.toLowerCase().endsWith("utm_medium") && PAID_UTM_MEDIUMS.has(entry.value.trim().toLowerCase()));
 }
@@ -219,13 +260,17 @@ function flattenEvidence(value: unknown, path = "root", output: EvidenceEntry[] 
 function firstStringField(flattened: EvidenceEntry[], fieldNames: string[]): string | undefined {
   const wanted = new Set(fieldNames.map((field) => field.toLowerCase()));
   for (const entry of flattened) {
-    const parts = entry.path.toLowerCase().split(".");
-    const key = parts[parts.length - 1];
+    const key = lastPathKey(entry.path);
     if (wanted.has(key) && entry.value.trim()) {
       return entry.value.trim().toLowerCase();
     }
   }
   return undefined;
+}
+
+function lastPathKey(path: string): string {
+  const parts = path.toLowerCase().split(".");
+  return parts[parts.length - 1];
 }
 
 function parseParams(value: string): URLSearchParams {

@@ -299,11 +299,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   async getSources(range: DashboardDateRange): Promise<DashboardSources> {
     const [leadRows, directSignupLeadRows, oneTimeCleanupRows, customerRows, campaignRows, unmatchedRows] = await Promise.all([
       this.pool.query(
-        `SELECT original_lead_source,
-                source,
-                metadata,
-                pipeline_name,
-                stage_name,
+        `SELECT o.original_lead_source,
+                o.source,
+                o.metadata,
+                o.pipeline_name,
+                o.stage_name,
                 o.contact_id AS dashboard_contact_id,
                 o.contact_external_id AS dashboard_ghl_contact_id,
                 ct.external_ghl_id AS dashboard_contact_external_ghl_id,
@@ -533,11 +533,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   private async leadsBySource(range: DashboardDateRange): Promise<SourceMetrics> {
     const [result, directSignupLeadRows, oneTimeCleanupRows] = await Promise.all([
       this.pool.query(
-      `SELECT original_lead_source,
-              source,
-              metadata,
-              pipeline_name,
-              stage_name,
+      `SELECT o.original_lead_source,
+              o.source,
+              o.metadata,
+              o.pipeline_name,
+              o.stage_name,
               o.contact_id AS dashboard_contact_id,
               o.contact_external_id AS dashboard_ghl_contact_id,
               ct.external_ghl_id AS dashboard_contact_external_ghl_id,
@@ -928,11 +928,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
     const [leadRows, directSignupLeadRows, oneTimeCleanupRows, customerRows, matchRows] = await Promise.all([
       this.pool.query(
-        `SELECT original_lead_source,
-                source,
-                metadata,
-                pipeline_name,
-                stage_name,
+        `SELECT o.original_lead_source,
+                o.source,
+                o.metadata,
+                o.pipeline_name,
+                o.stage_name,
                 o.contact_id AS dashboard_contact_id,
                 o.contact_external_id AS dashboard_ghl_contact_id,
                 ct.external_ghl_id AS dashboard_contact_external_ghl_id,

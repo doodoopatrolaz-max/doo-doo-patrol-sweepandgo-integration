@@ -596,6 +596,13 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
        LEFT JOIN contacts ct ON ct.id = c.contact_id
        LEFT JOIN customer_sources cs ON cs.customer_id = c.id
        WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
+         AND NOT EXISTS (
+           SELECT 1
+           FROM opportunities o
+           WHERE c.contact_id IS NOT NULL
+             AND o.contact_id = c.contact_id
+             AND ${reportingLeadExclusionSql("o")}
+         )
        GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
       [range.startDate, range.endDate]
     );

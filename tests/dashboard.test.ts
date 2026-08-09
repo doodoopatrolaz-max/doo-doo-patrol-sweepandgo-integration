@@ -540,7 +540,7 @@ describe("dashboard KPI aggregation", () => {
     assert(summary.dataNotes.some((note) => note.includes("manual review rows are not counted")));
     assert(summary.dataNotes.some((note) => note.includes("Cancellation quality check")));
     assert(!summary.dataNotes.some((note) => note.includes("Google Ads is not connected yet")));
-    const leadQueries = pool.queries.filter((query) => query.sql.includes("FROM opportunities"));
+    const leadQueries = pool.queries.filter((query) => query.sql.includes("FROM opportunities") && query.sql.includes("original_lead_date"));
     assert(leadQueries.some((query) => query.sql.includes("reporting_exclusions")));
     assert(leadQueries.every((query) => query.sql.includes("AT TIME ZONE 'America/Phoenix'")));
     assert(leadQueries.every((query) => !query.sql.includes("ILIKE")));
@@ -911,7 +911,8 @@ describe("dashboard KPI aggregation", () => {
                 metadata: { workflowLeadSource: "website" },
                 pipeline_name: "New Lead to Onboarding",
                 stage_name: "Website Quote Lead",
-                dashboard_contact_id: "contact-paid-organic"
+                dashboard_contact_id: "contact-organic-ghl",
+                dashboard_email: "paid-organic@example.invalid"
               },
               {
                 original_lead_source: "website",
@@ -931,7 +932,8 @@ describe("dashboard KPI aggregation", () => {
               source_raw: "unknown",
               metadata: {},
               monthly_recurring_revenue: 92,
-              dashboard_contact_id: "contact-paid-organic",
+              dashboard_contact_id: "contact-paid-customer",
+              dashboard_email: "paid-organic@example.invalid",
               source_evidence: [{
                 source: "website",
                 source_raw: "Search Engine",

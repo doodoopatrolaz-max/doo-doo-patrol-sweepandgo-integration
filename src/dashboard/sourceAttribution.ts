@@ -28,6 +28,14 @@ export const DASHBOARD_SOURCE_BUCKETS: DashboardSourceBucket[] = [
   "truck_wrap",
   "other_unknown"
 ];
+const DASHBOARD_SOURCE_BUCKET_PRIORITY: Record<DashboardSourceBucket, number> = {
+  website_paid: 6,
+  facebook: 5,
+  referral: 4,
+  truck_wrap: 3,
+  website_organic: 2,
+  other_unknown: 1
+};
 
 export const DEFAULT_DASHBOARD_SOURCE_ATTRIBUTION_CONFIG: DashboardSourceAttributionConfig = {
   // Owner-approved rule: Search Engine is reported as Website Paid for dashboard attribution.
@@ -138,6 +146,15 @@ export function addToDetailedBreakdown(
   count = 1
 ): void {
   breakdown[bucket] += count;
+}
+
+export function higherPriorityDashboardSourceBucket(
+  current: DashboardSourceBucket,
+  candidate: DashboardSourceBucket
+): DashboardSourceBucket {
+  return DASHBOARD_SOURCE_BUCKET_PRIORITY[candidate] > DASHBOARD_SOURCE_BUCKET_PRIORITY[current]
+    ? candidate
+    : current;
 }
 
 function sourceResult(

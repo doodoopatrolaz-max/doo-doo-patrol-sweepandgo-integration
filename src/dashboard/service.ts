@@ -5,6 +5,7 @@ import {
   addToDetailedBreakdown,
   classifyDashboardSource,
   emptyDetailedSourceBreakdown,
+  higherPriorityDashboardSourceBucket,
   type DashboardDetailedSourceBreakdown,
   type DashboardSourceBucket
 } from "./sourceAttribution.ts";
@@ -302,8 +303,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                 source,
                 metadata,
                 pipeline_name,
-                stage_name
+                stage_name,
+                o.contact_id AS dashboard_contact_id,
+                o.contact_external_id AS dashboard_ghl_contact_id,
+                ct.external_ghl_id AS dashboard_contact_external_ghl_id,
+                ct.primary_email AS dashboard_email,
+                ct.primary_phone AS dashboard_phone
          FROM opportunities o
+         LEFT JOIN contacts ct ON ct.id = o.contact_id
          WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
@@ -314,6 +321,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         `SELECT c.source,
                 c.source_raw,
                 c.metadata,
+                c.contact_id AS dashboard_contact_id,
+                c.external_sweepgo_id AS dashboard_sweepgo_customer_id,
+                ct.external_ghl_id AS dashboard_ghl_contact_id,
+                ct.primary_email AS dashboard_email,
+                ct.primary_phone AS dashboard_phone,
                 COALESCE(
                   jsonb_agg(
                     jsonb_build_object(
@@ -326,9 +338,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                   '[]'::jsonb
                 ) AS source_evidence
          FROM customers c
+         LEFT JOIN contacts ct ON ct.id = c.contact_id
          LEFT JOIN customer_sources cs ON cs.customer_id = c.id
          WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
-         GROUP BY c.id`,
+         GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
@@ -362,7 +375,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       source: row.source,
       metadata: row.metadata,
       pipeline_name: row.pipeline_name,
-      stage_name: row.stage_name
+      stage_name: row.stage_name,
+      dashboard_contact_id: row.dashboard_contact_id,
+      dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
+      dashboard_contact_external_ghl_id: row.dashboard_contact_external_ghl_id,
+      dashboard_email: row.dashboard_email,
+      dashboard_phone: row.dashboard_phone
       })),
       ...directSignupLeadRows,
       ...oneTimeCleanupRows.map((row) => row.sourceInput)
@@ -371,7 +389,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       source: row.source,
       source_raw: row.source_raw,
       metadata: row.metadata,
-      source_evidence: row.source_evidence
+      source_evidence: row.source_evidence,
+      dashboard_contact_id: row.dashboard_contact_id,
+      dashboard_sweepgo_customer_id: row.dashboard_sweepgo_customer_id,
+      dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
+      dashboard_email: row.dashboard_email,
+      dashboard_phone: row.dashboard_phone
     }))).detailed;
     const leadSources = SOURCES.map((source) => ({
       source,
@@ -514,8 +537,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
               source,
               metadata,
               pipeline_name,
-              stage_name
+              stage_name,
+              o.contact_id AS dashboard_contact_id,
+              o.contact_external_id AS dashboard_ghl_contact_id,
+              ct.external_ghl_id AS dashboard_contact_external_ghl_id,
+              ct.primary_email AS dashboard_email,
+              ct.primary_phone AS dashboard_phone
        FROM opportunities o
+       LEFT JOIN contacts ct ON ct.id = o.contact_id
        WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
          AND ${reportingLeadExclusionSql("o")}`,
       [range.startDate, range.endDate]
@@ -529,7 +558,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       source: row.source,
       metadata: row.metadata,
       pipeline_name: row.pipeline_name,
-      stage_name: row.stage_name
+      stage_name: row.stage_name,
+      dashboard_contact_id: row.dashboard_contact_id,
+      dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
+      dashboard_contact_external_ghl_id: row.dashboard_contact_external_ghl_id,
+      dashboard_email: row.dashboard_email,
+      dashboard_phone: row.dashboard_phone
       })),
       ...directSignupLeadRows,
       ...oneTimeCleanupRows.map((row) => row.sourceInput)
@@ -542,6 +576,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
               c.source_raw,
               c.metadata,
               c.monthly_recurring_revenue,
+              c.contact_id AS dashboard_contact_id,
+              c.external_sweepgo_id AS dashboard_sweepgo_customer_id,
+              ct.external_ghl_id AS dashboard_ghl_contact_id,
+              ct.primary_email AS dashboard_email,
+              ct.primary_phone AS dashboard_phone,
               COALESCE(
                 jsonb_agg(
                   jsonb_build_object(
@@ -554,16 +593,22 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                 '[]'::jsonb
               ) AS source_evidence
        FROM customers c
+       LEFT JOIN contacts ct ON ct.id = c.contact_id
        LEFT JOIN customer_sources cs ON cs.customer_id = c.id
        WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
-       GROUP BY c.id`,
+       GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
       [range.startDate, range.endDate]
     );
     const sourceMetrics = rowsToSourceMetrics(result.rows.map((row) => ({
       source: row.source,
       source_raw: row.source_raw,
       metadata: row.metadata,
-      source_evidence: row.source_evidence
+      source_evidence: row.source_evidence,
+      dashboard_contact_id: row.dashboard_contact_id,
+      dashboard_sweepgo_customer_id: row.dashboard_sweepgo_customer_id,
+      dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
+      dashboard_email: row.dashboard_email,
+      dashboard_phone: row.dashboard_phone
     })));
     const pricedCount = result.rows.filter((row) => row.monthly_recurring_revenue !== null && row.monthly_recurring_revenue !== undefined).length;
     const mrrAdded = result.rows.reduce((sum, row) => sum + numberValue(row.monthly_recurring_revenue), 0);
@@ -887,8 +932,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                 source,
                 metadata,
                 pipeline_name,
-                stage_name
+                stage_name,
+                o.contact_id AS dashboard_contact_id,
+                o.contact_external_id AS dashboard_ghl_contact_id,
+                ct.external_ghl_id AS dashboard_contact_external_ghl_id,
+                ct.primary_email AS dashboard_email,
+                ct.primary_phone AS dashboard_phone
          FROM opportunities o
+         LEFT JOIN contacts ct ON ct.id = o.contact_id
          WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
@@ -899,6 +950,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         `SELECT c.source,
                 c.source_raw,
                 c.metadata,
+                c.contact_id AS dashboard_contact_id,
+                c.external_sweepgo_id AS dashboard_sweepgo_customer_id,
+                ct.external_ghl_id AS dashboard_ghl_contact_id,
+                ct.primary_email AS dashboard_email,
+                ct.primary_phone AS dashboard_phone,
                 COALESCE(
                   jsonb_agg(
                     jsonb_build_object(
@@ -911,9 +967,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                   '[]'::jsonb
                 ) AS source_evidence
          FROM customers c
+         LEFT JOIN contacts ct ON ct.id = c.contact_id
          LEFT JOIN customer_sources cs ON cs.customer_id = c.id
          WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
-         GROUP BY c.id`,
+         GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
         [range.startDate, range.endDate]
       ),
       this.pool.query(
@@ -940,7 +997,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       source: row.source,
       metadata: row.metadata,
       pipeline_name: row.pipeline_name,
-      stage_name: row.stage_name
+      stage_name: row.stage_name,
+      dashboard_contact_id: row.dashboard_contact_id,
+      dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
+      dashboard_contact_external_ghl_id: row.dashboard_contact_external_ghl_id,
+      dashboard_email: row.dashboard_email,
+      dashboard_phone: row.dashboard_phone
       })),
       ...directSignupLeadRows,
       ...oneTimeCleanupRows.map((row) => row.sourceInput)
@@ -949,7 +1011,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       source: row.source,
       source_raw: row.source_raw,
       metadata: row.metadata,
-      source_evidence: row.source_evidence
+      source_evidence: row.source_evidence,
+      dashboard_contact_id: row.dashboard_contact_id,
+      dashboard_sweepgo_customer_id: row.dashboard_sweepgo_customer_id,
+      dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
+      dashboard_email: row.dashboard_email,
+      dashboard_phone: row.dashboard_phone
     }))).detailed;
     const matchRow = matchRows.rows[0] ?? {};
     const futureCredits = emptyDetailedSourceBreakdown();
@@ -1031,6 +1098,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
               c.source,
               c.source_raw,
               c.metadata,
+              c.contact_id AS dashboard_contact_id,
+              c.external_sweepgo_id AS dashboard_sweepgo_customer_id,
+              ct.external_ghl_id AS dashboard_ghl_contact_id,
+              ct.primary_email AS dashboard_email,
+              ct.primary_phone AS dashboard_phone,
               COALESCE(
                 jsonb_agg(
                   jsonb_build_object(
@@ -1041,19 +1113,12 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                   )
                 ) FILTER (WHERE cs.id IS NOT NULL),
                 '[]'::jsonb
-              ) AS source_evidence
+                ) AS source_evidence
        FROM customers c
+       LEFT JOIN contacts ct ON ct.id = c.contact_id
        LEFT JOIN customer_sources cs ON cs.customer_id = c.id
        WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
-         AND NOT EXISTS (
-           SELECT 1
-           FROM
-             opportunities o
-           WHERE c.contact_id IS NOT NULL
-             AND o.contact_id = c.contact_id
-             AND ${reportingLeadExclusionSql("o")}
-         )
-       GROUP BY c.id`,
+       GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
       [range.startDate, range.endDate]
     );
 
@@ -1298,12 +1363,118 @@ function indexByDate(rows: Array<Record<string, unknown>>): Map<string, Record<s
 function rowsToSourceMetrics(rows: Array<Record<string, unknown>>): SourceMetrics {
   const legacy = emptySourceBreakdown();
   const detailed = emptyDetailedSourceBreakdown();
-  for (const row of rows) {
-    const attribution = classifyDashboardSource(row);
-    addToDetailedBreakdown(detailed, attribution.bucket);
-    legacy[legacySourceFromBucket(attribution.bucket)] += 1;
+  for (const bucket of collapseRowsBySourcePrecedence(rows)) {
+    addToDetailedBreakdown(detailed, bucket);
+    legacy[legacySourceFromBucket(bucket)] += 1;
   }
   return { legacy, detailed };
+}
+
+function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): DashboardSourceBucket[] {
+  const unkeyedBuckets: DashboardSourceBucket[] = [];
+  const groups: Array<{ keys: Set<string>; bucket: DashboardSourceBucket }> = [];
+  const groupsByKey = new Map<string, number>();
+
+  for (const row of rows) {
+    const bucket = classifyDashboardSource(row).bucket;
+    const keys = sourceMetricIdentityKeys(row);
+    if (keys.length === 0) {
+      unkeyedBuckets.push(bucket);
+      continue;
+    }
+
+    const existingIndexes = [...new Set(keys.map((key) => groupsByKey.get(key)).filter((index): index is number => index !== undefined))];
+    if (existingIndexes.length === 0) {
+      const index = groups.length;
+      groups.push({ keys: new Set(keys), bucket });
+      for (const key of keys) {
+        groupsByKey.set(key, index);
+      }
+      continue;
+    }
+
+    const primaryIndex = existingIndexes[0];
+    const primary = groups[primaryIndex];
+    primary.bucket = higherPriorityDashboardSourceBucket(primary.bucket, bucket);
+    for (const key of keys) {
+      primary.keys.add(key);
+    }
+
+    for (const duplicateIndex of existingIndexes.slice(1).sort((a, b) => b - a)) {
+      if (duplicateIndex === primaryIndex) {
+        continue;
+      }
+      const duplicate = groups[duplicateIndex];
+      primary.bucket = higherPriorityDashboardSourceBucket(primary.bucket, duplicate.bucket);
+      for (const key of duplicate.keys) {
+        primary.keys.add(key);
+      }
+      groups.splice(duplicateIndex, 1);
+    }
+
+    groupsByKey.clear();
+    groups.forEach((group, index) => {
+      for (const key of group.keys) {
+        groupsByKey.set(key, index);
+      }
+    });
+  }
+
+  return [...groups.map((group) => group.bucket), ...unkeyedBuckets];
+}
+
+function sourceMetricIdentityKeys(row: Record<string, unknown>): string[] {
+  const keys = new Set<string>();
+  addStringKey(keys, "contact", row.dashboard_contact_id);
+  addStringKey(keys, "ghl_contact", row.dashboard_ghl_contact_id);
+  addStringKey(keys, "ghl_contact", row.dashboard_contact_external_ghl_id);
+  addStringKey(keys, "sweepgo_customer", row.dashboard_sweepgo_customer_id);
+
+  const email = normalizeEmail(stringValue(row.dashboard_email) ?? findFirstNestedString(row, [
+    "dashboard_email",
+    "primary_email",
+    "email",
+    "customer_email",
+    "customerEmail",
+    "client_email",
+    "clientEmail"
+  ]));
+  if (email) {
+    keys.add(`email:${email}`);
+  }
+
+  const phone = normalizePhone(stringValue(row.dashboard_phone) ?? findFirstNestedString(row, [
+    "dashboard_phone",
+    "primary_phone",
+    "phone",
+    "phone_number",
+    "phoneNumber",
+    "cell_phone",
+    "cellPhone",
+    "cell_phone_number",
+    "cellPhoneNumber",
+    "mobile"
+  ]));
+  if (phone) {
+    keys.add(`phone:${phone}`);
+  }
+
+  const explicitKeys = Array.isArray(row.dashboard_identity_keys) ? row.dashboard_identity_keys : [];
+  for (const key of explicitKeys) {
+    const normalized = stringValue(key)?.trim().toLowerCase();
+    if (normalized) {
+      keys.add(normalized.includes(":") ? normalized : `explicit:${normalized}`);
+    }
+  }
+
+  return [...keys];
+}
+
+function addStringKey(keys: Set<string>, prefix: string, value: unknown): void {
+  const normalized = stringValue(value)?.trim().toLowerCase();
+  if (normalized) {
+    keys.add(`${prefix}:${normalized}`);
+  }
 }
 
 function addDetailedBreakdown(target: DashboardDetailedSourceBreakdown, addition: DashboardDetailedSourceBreakdown): void {
@@ -1415,6 +1586,7 @@ function oneTimeCleanupSourceInput(row: Record<string, unknown>): Record<string,
   return {
     source: findFirstNestedString(row, ["lead_source", "original_source", "source", "customer_source", "acquisition_source", "tracking_field"]),
     source_raw: findFirstNestedString(row, ["source_raw", "sourceRaw"]),
+    dashboard_identity_keys: oneTimeCleanupIdentityKeys(row),
     metadata: {
       event_type: row.event_type,
       service_type: row.service_type,
@@ -1425,6 +1597,36 @@ function oneTimeCleanupSourceInput(row: Record<string, unknown>): Record<string,
       email_source_evidence: row.email_source_evidence
     }
   };
+}
+
+function oneTimeCleanupIdentityKeys(row: Record<string, unknown>): string[] {
+  const keys: string[] = [];
+  const email = normalizeEmail(stringValue(row.customer_email) ?? findFirstNestedString(row, [
+    "email",
+    "customer_email",
+    "customerEmail",
+    "client_email",
+    "clientEmail"
+  ]));
+  if (email) {
+    keys.push(`email:${email}`);
+  }
+
+  const phone = normalizePhone(findFirstNestedString(row, [
+    "phone",
+    "phone_number",
+    "phoneNumber",
+    "cell_phone",
+    "cellPhone",
+    "cell_phone_number",
+    "cellPhoneNumber",
+    "mobile"
+  ]));
+  if (phone) {
+    keys.push(`phone:${phone}`);
+  }
+
+  return keys;
 }
 
 function findFirstNestedString(value: unknown, keys: string[]): string | undefined {

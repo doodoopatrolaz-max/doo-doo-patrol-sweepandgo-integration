@@ -898,6 +898,91 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
   });
 
+  it("uses Website Paid over Website Organic for the same safe identity without double-counting leads", async () => {
+    class SourcePrecedencePool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return {
+            rows: [
+              {
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead",
+                dashboard_contact_id: "contact-paid-organic"
+              },
+              {
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead",
+                dashboard_contact_id: "contact-organic-only"
+              }
+            ]
+          };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: 92,
+              dashboard_contact_id: "contact-paid-organic",
+              source_evidence: [{
+                source: "website",
+                source_raw: "Search Engine",
+                source_provider: "owner_confirmed_new_client_email",
+                evidence: {
+                  how_heard_answer: "Search Engine",
+                  how_heard_about_us_details: "Google"
+                }
+              }]
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const baseline = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-09", end: "2026-08-09" }));
+    const summary = await new PostgresDashboardDataSource(new SourcePrecedencePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-09", end: "2026-08-09" }));
+
+    assert.equal(summary.totalLeads, 2);
+    assert.deepEqual(summary.leadSourceBreakdown, {
+      website_paid: 1,
+      website_organic: 1,
+      facebook: 0,
+      referral: 0,
+      truck_wrap: 0,
+      other_unknown: 0
+    });
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.deepEqual(summary.newRecurringCustomerSourceBreakdown, {
+      website_paid: 1,
+      website_organic: 0,
+      facebook: 0,
+      referral: 0,
+      truck_wrap: 0,
+      other_unknown: 0
+    });
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.conversions, 0);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.closeRate, 0);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 50);
+    assert.equal(summary.cancellations, baseline.cancellations);
+    assert.equal(summary.oneTimeCleanups, baseline.oneTimeCleanups);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
+  });
+
   it("uses Vehicle Signage email evidence for direct recurring Truck Wrap attribution", async () => {
     class VehicleSignageNewRecurringPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

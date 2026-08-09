@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { classifyDashboardSource } from "../src/dashboard/sourceAttribution.ts";
+import { classifyDashboardSource, higherPriorityDashboardSourceBucket } from "../src/dashboard/sourceAttribution.ts";
 
 describe("dashboard source attribution classifier", () => {
   it("maps gclid proof to Website Paid", () => {
@@ -146,5 +146,12 @@ describe("dashboard source attribution classifier", () => {
     const result = classifyDashboardSource({ source_detail: "direct_signup" });
 
     assert.equal(result.bucket, "other_unknown");
+  });
+
+  it("uses owner-approved source bucket precedence for the same safe identity", () => {
+    assert.equal(higherPriorityDashboardSourceBucket("website_organic", "website_paid"), "website_paid");
+    assert.equal(higherPriorityDashboardSourceBucket("facebook", "website_organic"), "facebook");
+    assert.equal(higherPriorityDashboardSourceBucket("truck_wrap", "referral"), "referral");
+    assert.equal(higherPriorityDashboardSourceBucket("other_unknown", "website_organic"), "website_organic");
   });
 });

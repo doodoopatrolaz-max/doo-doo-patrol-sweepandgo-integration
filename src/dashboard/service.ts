@@ -1166,10 +1166,6 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
            WHERE lcm.status = 'matched'
              AND lcm.sweepgo_customer_id = c.id
              AND lcm.lead_date IS NOT NULL
-             AND (
-               lcm.conversion_date IS NULL
-               OR ${leadReportingDateSql("lcm.conversion_date")} = c.first_recurring_date
-             )
          )
          AND NOT EXISTS (
            SELECT 1

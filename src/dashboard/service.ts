@@ -125,7 +125,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const websiteLeads = leadSourceBreakdown.website_paid + leadSourceBreakdown.website_organic;
     const otherLeads = leadSourceBreakdown.referral + leadSourceBreakdown.truck_wrap + leadSourceBreakdown.other_unknown;
     const totalLeads = DASHBOARD_SOURCE_BUCKETS.reduce((sum, source) => sum + leadSourceBreakdown[source], 0);
-    const newRecurringCustomers = customers.total + priorPeriodLeadConversions;
+    const newRecurringCustomers = customers.total;
     const totalAdSpend = adSpend.meta + adSpend.google;
     const estimatedMrrAdded = customers.mrrAdded === null ? null : roundMoney(customers.mrrAdded);
     const costPerNewCustomer = costPerNewRecurringCustomer(totalAdSpend, newRecurringCustomers);
@@ -308,9 +308,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                 o.contact_external_id AS dashboard_ghl_contact_id,
                 ct.external_ghl_id AS dashboard_contact_external_ghl_id,
                 ct.primary_email AS dashboard_email,
-                ct.primary_phone AS dashboard_phone
+                ct.primary_phone AS dashboard_phone,
+                ${matchedCustomerSourceEvidenceSelect()}
          FROM opportunities o
          LEFT JOIN contacts ct ON ct.id = o.contact_id
+         ${matchedCustomerSourceEvidenceJoin("o")}
          WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
@@ -380,7 +382,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
       dashboard_contact_external_ghl_id: row.dashboard_contact_external_ghl_id,
       dashboard_email: row.dashboard_email,
-      dashboard_phone: row.dashboard_phone
+      dashboard_phone: row.dashboard_phone,
+      matched_customer_source_evidence: row.matched_customer_source_evidence
       })),
       ...directSignupLeadRows,
       ...oneTimeCleanupRows.map((row) => row.sourceInput)
@@ -542,9 +545,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
               o.contact_external_id AS dashboard_ghl_contact_id,
               ct.external_ghl_id AS dashboard_contact_external_ghl_id,
               ct.primary_email AS dashboard_email,
-              ct.primary_phone AS dashboard_phone
+              ct.primary_phone AS dashboard_phone,
+              ${matchedCustomerSourceEvidenceSelect()}
        FROM opportunities o
        LEFT JOIN contacts ct ON ct.id = o.contact_id
+       ${matchedCustomerSourceEvidenceJoin("o")}
        WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
          AND ${reportingLeadExclusionSql("o")}`,
       [range.startDate, range.endDate]
@@ -563,7 +568,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
       dashboard_contact_external_ghl_id: row.dashboard_contact_external_ghl_id,
       dashboard_email: row.dashboard_email,
-      dashboard_phone: row.dashboard_phone
+      dashboard_phone: row.dashboard_phone,
+      matched_customer_source_evidence: row.matched_customer_source_evidence
       })),
       ...directSignupLeadRows,
       ...oneTimeCleanupRows.map((row) => row.sourceInput)
@@ -596,13 +602,6 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
        LEFT JOIN contacts ct ON ct.id = c.contact_id
        LEFT JOIN customer_sources cs ON cs.customer_id = c.id
        WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
-         AND NOT EXISTS (
-           SELECT 1
-           FROM opportunities o
-           WHERE c.contact_id IS NOT NULL
-             AND o.contact_id = c.contact_id
-             AND ${reportingLeadExclusionSql("o")}
-         )
        GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
       [range.startDate, range.endDate]
     );
@@ -933,7 +932,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async closeRateMetrics(range: DashboardDateRange): Promise<DashboardCloseRateMetrics> {
-    const [leadRows, directSignupLeadRows, oneTimeCleanupRows, customerRows, matchRows] = await Promise.all([
+    const [leadRows, directSignupLeadRows, oneTimeCleanupRows, customerRows, matchRows, futureMatchRows] = await Promise.all([
       this.pool.query(
         `SELECT o.original_lead_source,
                 o.source,
@@ -944,9 +943,11 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                 o.contact_external_id AS dashboard_ghl_contact_id,
                 ct.external_ghl_id AS dashboard_contact_external_ghl_id,
                 ct.primary_email AS dashboard_email,
-                ct.primary_phone AS dashboard_phone
+                ct.primary_phone AS dashboard_phone,
+                ${matchedCustomerSourceEvidenceSelect()}
          FROM opportunities o
          LEFT JOIN contacts ct ON ct.id = o.contact_id
+         ${matchedCustomerSourceEvidenceJoin("o")}
          WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
            AND ${reportingLeadExclusionSql("o")}`,
         [range.startDate, range.endDate]
@@ -994,6 +995,30 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          WHERE lead_date BETWEEN $1::date AND $2::date
             OR conversion_date BETWEEN $1::date AND $2::date`,
         [range.startDate, range.endDate]
+      ),
+      this.pool.query(
+        `SELECT /* matched_future_conversion_source_rows */
+                lcm.lead_source AS original_lead_source,
+                o.source,
+                COALESCE(o.metadata, '{}'::jsonb) || COALESCE(lcm.metadata, '{}'::jsonb) AS metadata,
+                o.pipeline_name,
+                o.stage_name,
+                o.contact_id AS dashboard_contact_id,
+                o.contact_external_id AS dashboard_ghl_contact_id,
+                ct.external_ghl_id AS dashboard_contact_external_ghl_id,
+                ct.primary_email AS dashboard_email,
+                ct.primary_phone AS dashboard_phone,
+                ${matchedCustomerSourceEvidenceSelect()}
+         FROM lead_customer_matches lcm
+         LEFT JOIN opportunities o
+           ON o.id = lcm.bi_lead_opportunity_id
+           OR o.external_opportunity_id = lcm.ghl_lead_opportunity_id
+         LEFT JOIN contacts ct ON ct.id = o.contact_id
+         ${matchedCustomerSourceEvidenceJoin("o")}
+         WHERE lcm.status = 'matched'
+           AND lcm.lead_date BETWEEN $1::date AND $2::date
+           AND lcm.conversion_date > $2::date`,
+        [range.startDate, range.endDate]
       )
     ]);
     const directSignupLeadBreakdown = rowsToSourceMetrics(directSignupLeadRows).detailed;
@@ -1009,7 +1034,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
       dashboard_contact_external_ghl_id: row.dashboard_contact_external_ghl_id,
       dashboard_email: row.dashboard_email,
-      dashboard_phone: row.dashboard_phone
+      dashboard_phone: row.dashboard_phone,
+      matched_customer_source_evidence: row.matched_customer_source_evidence
       })),
       ...directSignupLeadRows,
       ...oneTimeCleanupRows.map((row) => row.sourceInput)
@@ -1026,10 +1052,19 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       dashboard_phone: row.dashboard_phone
     }))).detailed;
     const matchRow = matchRows.rows[0] ?? {};
-    const futureCredits = emptyDetailedSourceBreakdown();
-    futureCredits.facebook = integerValue(matchRow.facebook_future_lead_month_credit);
-    futureCredits.website_organic = integerValue(matchRow.website_future_lead_month_credit);
-    futureCredits.other_unknown = integerValue(matchRow.other_unknown_future_lead_month_credit);
+    const futureCredits = rowsToSourceMetrics(futureMatchRows.rows.map((row) => ({
+      original_lead_source: row.original_lead_source,
+      source: row.source,
+      metadata: row.metadata,
+      pipeline_name: row.pipeline_name,
+      stage_name: row.stage_name,
+      dashboard_contact_id: row.dashboard_contact_id,
+      dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
+      dashboard_contact_external_ghl_id: row.dashboard_contact_external_ghl_id,
+      dashboard_email: row.dashboard_email,
+      dashboard_phone: row.dashboard_phone,
+      matched_customer_source_evidence: row.matched_customer_source_evidence
+    }))).detailed;
     const conversionBreakdown = emptyDetailedSourceBreakdown();
     for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
       conversionBreakdown[bucket] = customerBreakdown[bucket] + futureCredits[bucket] + oneTimeCleanupBreakdown[bucket];
@@ -1120,11 +1155,19 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                   )
                 ) FILTER (WHERE cs.id IS NOT NULL),
                 '[]'::jsonb
-                ) AS source_evidence
+               ) AS source_evidence
        FROM customers c
        LEFT JOIN contacts ct ON ct.id = c.contact_id
        LEFT JOIN customer_sources cs ON cs.customer_id = c.id
        WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
+         AND NOT EXISTS (
+           SELECT 1
+           FROM opportunities o
+           LEFT JOIN contacts oct ON oct.id = o.contact_id
+           WHERE ${reportingLeadExclusionSql("o")}
+             AND o.original_lead_date IS NOT NULL
+             AND ${safeCustomerOpportunityIdentityMatchSql("c", "ct", "o", "oct")}
+         )
        GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
       [range.startDate, range.endDate]
     );
@@ -1223,6 +1266,73 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
 
 function leadReportingDateSql(column: string): string {
   return `(${column} AT TIME ZONE '${DASHBOARD_REPORTING_TIME_ZONE}')::date`;
+}
+
+function matchedCustomerSourceEvidenceSelect(): string {
+  return "COALESCE(matched_customer_sources.source_evidence, '[]'::jsonb) AS matched_customer_source_evidence";
+}
+
+function matchedCustomerSourceEvidenceJoin(opportunityAlias: string): string {
+  return `LEFT JOIN LATERAL (
+           SELECT jsonb_agg(
+                    jsonb_build_object(
+                      'source', mc.source,
+                      'source_raw', mc.source_raw,
+                      'metadata', mc.metadata,
+                      'source_evidence', COALESCE(matched_customer_evidence.source_evidence, '[]'::jsonb)
+                    )
+                  ) AS source_evidence
+           FROM lead_customer_matches lcm_source
+           JOIN customers mc ON mc.id = lcm_source.sweepgo_customer_id
+           LEFT JOIN LATERAL (
+             SELECT jsonb_agg(
+                      jsonb_build_object(
+                        'source', cs.source,
+                        'source_raw', cs.source_raw,
+                        'source_provider', cs.source_provider,
+                        'evidence', cs.evidence
+                      )
+                    ) AS source_evidence
+             FROM customer_sources cs
+             WHERE cs.customer_id = mc.id
+           ) matched_customer_evidence ON TRUE
+           WHERE lcm_source.status = 'matched'
+             AND (
+               lcm_source.bi_lead_opportunity_id = ${opportunityAlias}.id
+               OR lcm_source.ghl_lead_opportunity_id = ${opportunityAlias}.external_opportunity_id
+             )
+         ) matched_customer_sources ON TRUE`;
+}
+
+function safeCustomerOpportunityIdentityMatchSql(
+  customerAlias: string,
+  customerContactAlias: string,
+  opportunityAlias: string,
+  opportunityContactAlias: string
+): string {
+  const customerPhone = normalizedPhoneSql(`${customerContactAlias}.primary_phone`);
+  const opportunityPhone = normalizedPhoneSql(`${opportunityContactAlias}.primary_phone`);
+  return `(
+              (${customerAlias}.contact_id IS NOT NULL AND ${opportunityAlias}.contact_id = ${customerAlias}.contact_id)
+              OR (
+                ${customerContactAlias}.external_ghl_id IS NOT NULL
+                AND ${opportunityAlias}.contact_external_id = ${customerContactAlias}.external_ghl_id
+              )
+              OR (
+                ${customerContactAlias}.primary_email IS NOT NULL
+                AND ${opportunityContactAlias}.primary_email IS NOT NULL
+                AND lower(trim(${customerContactAlias}.primary_email)) = lower(trim(${opportunityContactAlias}.primary_email))
+              )
+              OR (
+                ${customerPhone} IS NOT NULL
+                AND ${opportunityPhone} IS NOT NULL
+                AND ${customerPhone} = ${opportunityPhone}
+              )
+            )`;
+}
+
+function normalizedPhoneSql(column: string): string {
+  return `NULLIF(regexp_replace(${column}, '\\D', '', 'g'), '')`;
 }
 
 export class EmptyDashboardDataSource implements DashboardDataSource {

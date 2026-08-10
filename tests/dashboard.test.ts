@@ -1052,6 +1052,9 @@ describe("dashboard KPI aggregation", () => {
         }
         if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
           if (rangeStart === "2026-08-09") {
+            if (sql.includes("lcm.lead_date < $1::date")) {
+              return { rows: [] };
+            }
             return {
               rows: [{
                 source: "unknown",
@@ -1113,6 +1116,9 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(signupDay.newRecurringCustomerSourceBreakdown.website_paid, 1);
     assert.equal(signupDay.priorPeriodLeadConversions, 1);
     assert.equal(signupDay.closeRateMetrics.directSignupReportingLeads, 0);
+    assert.equal(signupDay.closeRateMetrics.websiteMatchedConversions, 0);
+    assert.equal(signupDay.closeRateMetrics.websiteCloseRate, 0);
+    assert.equal(signupDay.closeRateMetrics.totalCloseRate, 0);
   });
 
   it("uses Vehicle Signage email evidence for direct recurring Truck Wrap attribution", async () => {

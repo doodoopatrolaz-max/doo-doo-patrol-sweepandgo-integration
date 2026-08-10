@@ -978,6 +978,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          LEFT JOIN contacts ct ON ct.id = c.contact_id
          LEFT JOIN customer_sources cs ON cs.customer_id = c.id
          WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
+           AND NOT EXISTS (
+             SELECT 1
+             FROM lead_customer_matches lcm
+             WHERE lcm.status = 'matched'
+               AND lcm.sweepgo_customer_id = c.id
+               AND lcm.lead_date < $1::date
+               AND lcm.conversion_date BETWEEN $1::date AND $2::date
+           )
          GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
         [range.startDate, range.endDate]
       ),

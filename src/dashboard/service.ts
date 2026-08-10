@@ -587,6 +587,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
               ct.external_ghl_id AS dashboard_ghl_contact_id,
               ct.primary_email AS dashboard_email,
               ct.primary_phone AS dashboard_phone,
+              EXISTS (
+                SELECT 1
+                FROM lead_customer_matches lcm
+                WHERE lcm.status = 'matched'
+                  AND lcm.sweepgo_customer_id = c.id
+                  AND lcm.lead_date < $1::date
+                  AND lcm.conversion_date BETWEEN $1::date AND $2::date
+              ) AS prior_period_lead_conversion,
               COALESCE(
                 jsonb_agg(
                   jsonb_build_object(
@@ -605,7 +613,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
        GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
       [range.startDate, range.endDate]
     );
-    const sourceMetrics = rowsToSourceMetrics(result.rows.map((row) => ({
+    const selectedPeriodSourceRows = result.rows.filter((row) => !Boolean(row.prior_period_lead_conversion));
+    const sourceMetrics = rowsToSourceMetrics(selectedPeriodSourceRows.map((row) => ({
       source: row.source,
       source_raw: row.source_raw,
       metadata: row.metadata,
@@ -619,7 +628,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     const pricedCount = result.rows.filter((row) => row.monthly_recurring_revenue !== null && row.monthly_recurring_revenue !== undefined).length;
     const mrrAdded = result.rows.reduce((sum, row) => sum + numberValue(row.monthly_recurring_revenue), 0);
     return {
-      total: DASHBOARD_SOURCE_BUCKETS.reduce((sum, source) => sum + sourceMetrics.detailed[source], 0),
+      total: result.rows.length,
       mrrAdded: pricedCount > 0 ? mrrAdded : null,
       bySource: sourceMetrics.legacy,
       sourceBreakdown: sourceMetrics.detailed

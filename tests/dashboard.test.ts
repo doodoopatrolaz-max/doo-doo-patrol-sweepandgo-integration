@@ -997,8 +997,9 @@ describe("dashboard KPI aggregation", () => {
       override async query(sql: string, params: unknown[] = []) {
         this.queries.push({ sql, params });
         const rangeStart = String(params[0] ?? "");
+        const rangeEnd = String(params[1] ?? "");
         if (sql.includes("matched_future_conversion_source_rows")) {
-          if (rangeStart === "2026-08-02") {
+          if (rangeStart === "2026-08-02" && rangeEnd === "2026-08-02") {
             return {
               rows: [{
                 original_lead_source: "website",
@@ -1051,9 +1052,31 @@ describe("dashboard KPI aggregation", () => {
           return { rows: [] };
         }
         if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
-          if (rangeStart === "2026-08-09") {
-            if (sql.includes("lcm.lead_date < $1::date")) {
-              return { rows: [] };
+          if (
+            rangeStart === "2026-08-09"
+            || (rangeStart === "2026-08-02" && rangeEnd === "2026-08-09")
+          ) {
+            if (sql.includes("AND NOT EXISTS")) {
+              return rangeStart === "2026-08-09"
+                ? { rows: [] }
+                : {
+                    rows: [{
+                      source: "unknown",
+                      source_raw: "unknown",
+                      metadata: {},
+                      monthly_recurring_revenue: null,
+                      dashboard_email: "existing-lead@example.invalid",
+                      source_evidence: [{
+                        source: "website",
+                        source_raw: "Search Engine",
+                        source_provider: "sweepandgo_new_client_email",
+                        evidence: {
+                          how_heard_about_us: "Search Engine",
+                          how_heard_about_us_details: "Google"
+                        }
+                      }]
+                    }]
+                  };
             }
             return {
               rows: [{
@@ -1062,6 +1085,7 @@ describe("dashboard KPI aggregation", () => {
                 metadata: {},
                 monthly_recurring_revenue: null,
                 dashboard_email: "existing-lead@example.invalid",
+                prior_period_lead_conversion: sql.includes("AS prior_period_lead_conversion") && rangeStart === "2026-08-09",
                 source_evidence: [{
                   source: "website",
                   source_raw: "Search Engine",
@@ -1103,6 +1127,7 @@ describe("dashboard KPI aggregation", () => {
     const service = new PostgresDashboardDataSource(new ExistingLeadLaterSignupPool());
     const originalLeadDay = await service.getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-02", end: "2026-08-02" }));
     const signupDay = await service.getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-09", end: "2026-08-09" }));
+    const fullRange = await service.getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-02", end: "2026-08-09" }));
 
     assert.equal(originalLeadDay.totalLeads, 1);
     assert.equal(originalLeadDay.leadSourceBreakdown.website_paid, 1);
@@ -1113,12 +1138,20 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(signupDay.totalLeads, 0);
     assert.equal(signupDay.newRecurringCustomers, 1);
-    assert.equal(signupDay.newRecurringCustomerSourceBreakdown.website_paid, 1);
+    assert.equal(signupDay.newRecurringCustomerSourceBreakdown.website_paid, 0);
     assert.equal(signupDay.priorPeriodLeadConversions, 1);
     assert.equal(signupDay.closeRateMetrics.directSignupReportingLeads, 0);
     assert.equal(signupDay.closeRateMetrics.websiteMatchedConversions, 0);
     assert.equal(signupDay.closeRateMetrics.websiteCloseRate, 0);
     assert.equal(signupDay.closeRateMetrics.totalCloseRate, 0);
+
+    assert.equal(fullRange.totalLeads, 1);
+    assert.equal(fullRange.leadSourceBreakdown.website_paid, 1);
+    assert.equal(fullRange.newRecurringCustomers, 1);
+    assert.equal(fullRange.newRecurringCustomerSourceBreakdown.website_paid, 1);
+    assert.equal(fullRange.priorPeriodLeadConversions, 0);
+    assert.equal(fullRange.closeRateMetrics.websiteMatchedConversions, 1);
+    assert.equal(fullRange.closeRateMetrics.websiteCloseRate, 100);
   });
 
   it("uses Vehicle Signage email evidence for direct recurring Truck Wrap attribution", async () => {

@@ -197,8 +197,12 @@ export type DashboardCampaignRow = {
   spend: number;
   impressions: number;
   clicks: number;
+  averageCpc: number | null;
   leads: number;
   conversions: number;
+  adPlatformConversions: number;
+  costPerAdPlatformConversion: number | null;
+  dashboardLeads: number;
 };
 
 export type DashboardSources = {

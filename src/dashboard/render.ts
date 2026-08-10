@@ -318,11 +318,11 @@ function renderSources(sources: DashboardSources): string {
       <div>
         <h2>Campaign Performance</h2>
         <table>
-          <thead><tr><th>Provider</th><th>Campaigns</th><th>Spend</th><th>Clicks</th><th>Leads</th></tr></thead>
+          <thead><tr><th>Provider</th><th>Campaigns</th><th>Spend</th><th>Clicks</th><th>Avg CPC</th><th>Ad Conv.</th><th>Cost / Conv.</th><th>Dash Leads</th></tr></thead>
           <tbody>
             ${sources.campaignPerformance.length ? sources.campaignPerformance.map((row) => `
-              <tr><td>${escapeHtml(title(row.provider))}</td><td>${row.campaignCount}</td><td>${escapeHtml(money(row.spend))}</td><td>${row.clicks}</td><td>${row.leads}</td></tr>
-            `).join("") : `<tr><td colspan="5">No ad performance rows for this range.</td></tr>`}
+              <tr><td>${escapeHtml(title(row.provider))}</td><td>${row.campaignCount}</td><td>${escapeHtml(money(row.spend))}</td><td>${row.clicks}</td><td>${escapeHtml(maybeMoneyWithFallback(row.averageCpc, "No clicks"))}</td><td>${escapeHtml(metricNumber(row.adPlatformConversions))}</td><td>${escapeHtml(maybeMoneyWithFallback(row.costPerAdPlatformConversion, "No conversions"))}</td><td>${row.dashboardLeads}</td></tr>
+            `).join("") : `<tr><td colspan="8">No ad performance rows for this range.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -481,6 +481,17 @@ function money(value: number): string {
 
 function maybeMoney(value: number | null): string {
   return value === null ? "No data" : money(value);
+}
+
+function maybeMoneyWithFallback(value: number | null, fallback: string): string {
+  return value === null ? fallback : money(value);
+}
+
+function metricNumber(value: number): string {
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  });
 }
 
 function maybePercent(value: number | null): string {

@@ -353,7 +353,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                 SUM(impressions)::int AS impressions,
                 SUM(clicks)::int AS clicks,
                 SUM(leads)::int AS leads,
-                SUM(conversions)::int AS conversions
+                SUM(conversions)::int AS conversions,
+                COALESCE(SUM(conversions_decimal), SUM(conversions)::numeric, 0)::float AS ad_platform_conversions
          FROM daily_ad_performance
          WHERE report_date BETWEEN $1::date AND $2::date
          GROUP BY provider
@@ -407,15 +408,25 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
 
     return {
       leadSources,
-      campaignPerformance: campaignRows.rows.map((row) => ({
-        provider: stringValue(row.provider) || "unknown",
-        campaignCount: integerValue(row.campaign_count),
-        spend: roundMoney(numberValue(row.spend)),
-        impressions: integerValue(row.impressions),
-        clicks: integerValue(row.clicks),
-        leads: integerValue(row.leads),
-        conversions: integerValue(row.conversions)
-      })) satisfies DashboardCampaignRow[],
+      campaignPerformance: campaignRows.rows.map((row) => {
+        const provider = stringValue(row.provider) || "unknown";
+        const spend = roundMoney(numberValue(row.spend));
+        const clicks = integerValue(row.clicks);
+        const adPlatformConversions = roundMetric(numberValue(row.ad_platform_conversions));
+        return {
+          provider,
+          campaignCount: integerValue(row.campaign_count),
+          spend,
+          impressions: integerValue(row.impressions),
+          clicks,
+          averageCpc: clicks > 0 ? roundMoney(spend / clicks) : null,
+          leads: integerValue(row.leads),
+          conversions: integerValue(row.conversions),
+          adPlatformConversions,
+          costPerAdPlatformConversion: adPlatformConversions > 0 ? roundMoney(spend / adPlatformConversions) : null,
+          dashboardLeads: campaignDashboardLeads(provider, leadCounts)
+        };
+      }) satisfies DashboardCampaignRow[],
       unmatchedLeads: {
         count: integerValue(unmatchedRows.rows[0]?.count),
         note: "Unmatched lead count uses GoHighLevel lead records without a linked BI contact."
@@ -2005,6 +2016,21 @@ function integerValue(value: unknown): number {
 function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function campaignDashboardLeads(provider: string, leadCounts: DashboardDetailedSourceBreakdown): number {
+  const normalized = provider.trim().toLowerCase();
+  if (normalized === "google" || normalized === "google_ads") {
+    return leadCounts.website_paid ?? 0;
+  }
+  if (normalized === "meta" || normalized === "meta_ads" || normalized === "facebook" || normalized === "facebook_ads") {
+    return leadCounts.facebook ?? 0;
+  }
+  return 0;
+}
+
+function roundMetric(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function parsePayrollShiftRow(row: Record<string, unknown>): PayrollShiftRow {

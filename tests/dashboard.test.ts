@@ -148,6 +148,50 @@ class GoogleSpendPool extends FakePool {
   }
 }
 
+class CampaignPerformancePool extends FakePool {
+  private readonly input: {
+    spend: number;
+    clicks: number;
+    conversions: number;
+    dashboardLeads: number;
+  };
+
+  constructor(input: { spend: number; clicks: number; conversions: number; dashboardLeads: number }) {
+    super();
+    this.input = input;
+  }
+
+  override async query(sql: string, params: unknown[] = []) {
+    this.queries.push({ sql, params });
+    if (sql.includes("COUNT(DISTINCT external_campaign_id)") && sql.includes("ad_platform_conversions")) {
+      return {
+        rows: [{
+          provider: "google_ads",
+          campaign_count: 2,
+          spend: this.input.spend,
+          impressions: 1000,
+          clicks: this.input.clicks,
+          leads: 0,
+          conversions: Math.floor(this.input.conversions),
+          ad_platform_conversions: this.input.conversions
+        }]
+      };
+    }
+    if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+      return {
+        rows: Array.from({ length: this.input.dashboardLeads }, () => ({
+          original_lead_source: "website",
+          source: "website_paid",
+          metadata: { utm_medium: "cpc" },
+          pipeline_name: "New Lead to Onboarding",
+          stage_name: "Website Quote Lead"
+        }))
+      };
+    }
+    return await super.query(sql, params);
+  }
+}
+
 class ActiveRosterSnapshotPool extends FakePool {
   override async query(sql: string, params: unknown[] = []) {
     this.queries.push({ sql, params });
@@ -2060,6 +2104,72 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(syncHealth.rows[0]?.provider, "sweepandgo");
     assert.equal(syncHealth.rows[0]?.isStale, true);
     assert(syncHealth.rows[0]?.staleWarning?.includes("older than 24 hours"));
+  });
+
+  it("calculates Google Ads campaign CPC, conversions, conversion cost, and dashboard leads separately", async () => {
+    const service = new PostgresDashboardDataSource(new CampaignPerformancePool({
+      spend: 207.54,
+      clicks: 34,
+      conversions: 0,
+      dashboardLeads: 2
+    }));
+    const sources = await service.getSources(parseDashboardDateRange({ range: "thisMonth" }));
+    const [row] = sources.campaignPerformance;
+
+    assert.equal(row?.provider, "google_ads");
+    assert.equal(row?.campaignCount, 2);
+    assert.equal(row?.spend, 207.54);
+    assert.equal(row?.clicks, 34);
+    assert.equal(row?.averageCpc, 6.1);
+    assert.equal(row?.adPlatformConversions, 0);
+    assert.equal(row?.costPerAdPlatformConversion, null);
+    assert.equal(row?.leads, 0);
+    assert.equal(row?.dashboardLeads, 2);
+  });
+
+  it("renders campaign performance with ad conversions and Dashboard Leads labels", async () => {
+    const summary = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+    const sources = await new PostgresDashboardDataSource(new CampaignPerformancePool({
+      spend: 207.54,
+      clicks: 34,
+      conversions: 2.5,
+      dashboardLeads: 2
+    })).getSources(parseDashboardDateRange({ range: "thisMonth" }));
+    const html = renderDashboard({
+      ...dashboardData(summary),
+      sources
+    });
+
+    assert(html.includes("Avg CPC"));
+    assert(html.includes("Ad Conv."));
+    assert(html.includes("Cost / Conv."));
+    assert(html.includes("Dash Leads"));
+    assert(html.includes("$207.54"));
+    assert(html.includes("$6.10"));
+    assert(html.includes(">2.5<"));
+    assert(html.includes("$83.02"));
+    assert(html.includes(">2</td>"));
+    assert(!html.includes("<th>Clicks</th><th>Leads</th>"));
+  });
+
+  it("renders unavailable campaign CPC and conversion cost without misleading zero-dollar values", async () => {
+    const summary = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "thisMonth" }));
+    const sources = await new PostgresDashboardDataSource(new CampaignPerformancePool({
+      spend: 25,
+      clicks: 0,
+      conversions: 0,
+      dashboardLeads: 0
+    })).getSources(parseDashboardDateRange({ range: "thisMonth" }));
+    const html = renderDashboard({
+      ...dashboardData(summary),
+      sources
+    });
+
+    assert(html.includes("No clicks"));
+    assert(html.includes("No conversions"));
+    assert(!html.includes("$0.00</td><td>0</td><td>$0.00"));
   });
 
   it("treats Google as connected when monthly spend is stored", async () => {

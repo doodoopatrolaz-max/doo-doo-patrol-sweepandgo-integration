@@ -1022,6 +1022,7 @@ describe("dashboard KPI aggregation", () => {
         }
         if (sql.includes("direct_signup_reporting_leads")) {
           assert(sql.includes("NOT EXISTS"));
+          assert(sql.includes("lead_customer_matches"));
           assert(sql.includes("regexp_replace"));
           return { rows: [] };
         }

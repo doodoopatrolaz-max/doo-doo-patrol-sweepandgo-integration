@@ -1162,6 +1162,17 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
        WHERE c.first_recurring_date BETWEEN $1::date AND $2::date
          AND NOT EXISTS (
            SELECT 1
+           FROM lead_customer_matches lcm
+           WHERE lcm.status = 'matched'
+             AND lcm.sweepgo_customer_id = c.id
+             AND lcm.lead_date IS NOT NULL
+             AND (
+               lcm.conversion_date IS NULL
+               OR ${leadReportingDateSql("lcm.conversion_date")} = c.first_recurring_date
+             )
+         )
+         AND NOT EXISTS (
+           SELECT 1
            FROM opportunities o
            LEFT JOIN contacts oct ON oct.id = o.contact_id
            WHERE ${reportingLeadExclusionSql("o")}

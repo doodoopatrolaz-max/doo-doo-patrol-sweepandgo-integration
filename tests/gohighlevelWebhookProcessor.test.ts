@@ -253,6 +253,7 @@ describe("GoHighLevel webhook processor", () => {
     await processor.process(integrationEvent({
       event_type: "pipeline_stage_updated",
       opportunityId: "opp_SANITIZED_CONFLICT",
+      contactId: "ct_SANITIZED_CONFLICT",
       pipelineId: "pipe_TARGET",
       pipelineStageId: "stage_FACEBOOK",
       timestamp: "2026-06-13T13:00:00.000Z"
@@ -260,6 +261,7 @@ describe("GoHighLevel webhook processor", () => {
     await processor.process(integrationEvent({
       event_type: "pipeline_stage_updated",
       opportunityId: "opp_SANITIZED_CONFLICT",
+      contactId: "ct_SANITIZED_CONFLICT",
       pipelineId: "pipe_TARGET",
       pipelineStageId: "stage_WEBSITE",
       timestamp: "2026-06-13T13:05:00.000Z"
@@ -271,6 +273,94 @@ describe("GoHighLevel webhook processor", () => {
     assert.equal(store.opportunities.get("opp_SANITIZED_CONFLICT")?.originalLeadSource, "facebook");
   });
 
+  it("marks missing event_type as needs review without creating an opportunity", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    const result = await processor.process({
+      ...integrationEvent({
+        customData: {
+          opportunity_id: "opp_SANITIZED_MISSING_EVENT_TYPE",
+          contact_id: "ct_SANITIZED_MISSING_EVENT_TYPE",
+          lead_source: "website"
+        }
+      }, "evt_missing_event_type"),
+      eventType: "unknown"
+    });
+
+    assert.equal(result.reconciliationIssue, "gohighlevel_webhook_missing_event_type");
+    assert.equal(store.opportunities.size, 0);
+    assert.equal(store.issues.length, 1);
+    assert.equal(store.issues[0].issueType, "gohighlevel_webhook_missing_event_type");
+    assert.deepEqual(store.issues[0].details.missingRequiredFields, ["event_type"]);
+    assert.equal((store.issues[0].details.fieldPresence as Record<string, boolean>).opportunity_id, true);
+  });
+
+  it("marks missing contact IDs as needs review without creating a lead", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    const result = await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_MISSING_CONTACT",
+        lead_source: "website"
+      }
+    }, "evt_missing_contact"));
+
+    assert.equal(result.reconciliationIssue, "gohighlevel_webhook_missing_contact_id");
+    assert.equal(store.contacts.size, 0);
+    assert.equal(store.opportunities.size, 0);
+    assert.equal(store.issues.length, 1);
+    assert.deepEqual(store.issues[0].details.missingRequiredFields, ["contact_id"]);
+  });
+
+  it("marks missing lead_source as needs review without creating a dashboard lead", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    const result = await processor.process(integrationEvent({
+      customData: {
+        event_type: "opportunity_created",
+        opportunity_id: "opp_SANITIZED_MISSING_SOURCE",
+        contact_id: "ct_SANITIZED_MISSING_SOURCE"
+      }
+    }, "evt_missing_source"));
+
+    assert.equal(result.reconciliationIssue, "gohighlevel_webhook_missing_lead_source");
+    assert.equal(store.contacts.size, 0);
+    assert.equal(store.opportunities.size, 0);
+    assert.equal(store.issues.length, 1);
+    assert.deepEqual(store.issues[0].details.missingRequiredFields, ["lead_source"]);
+  });
+
+  it("logs missing required fields without raw payload IDs", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+    const originalLog = console.log;
+    const lines: string[] = [];
+    console.log = (line?: unknown) => {
+      lines.push(String(line));
+    };
+
+    try {
+      await processor.process(integrationEvent({
+        customData: {
+          event_type: "opportunity_created",
+          opportunity_id: "opp_SANITIZED_PRIVATE_LOG_CHECK",
+          lead_source: "website"
+        }
+      }, "evt_private_log_check"));
+    } finally {
+      console.log = originalLog;
+    }
+
+    const output = lines.join("\n");
+    assert.match(output, /missing required durable matching fields/);
+    assert.doesNotMatch(output, /opp_SANITIZED_PRIVATE_LOG_CHECK/);
+    assert.doesNotMatch(output, /raw/i);
+  });
+
   it("does not roll current stage backward when an out-of-order event arrives", async () => {
     const store = new FakeGoHighLevelWebhookStore();
     const processor = new GoHighLevelWebhookProcessor(store, config);
@@ -278,6 +368,7 @@ describe("GoHighLevel webhook processor", () => {
     await processor.process(integrationEvent({
       event_type: "pipeline_stage_updated",
       opportunityId: "opp_SANITIZED_ORDER",
+      contactId: "ct_SANITIZED_ORDER",
       pipelineId: "pipe_TARGET",
       pipelineStageId: "stage_FOLLOW_UP",
       timestamp: "2026-06-13T15:00:00.000Z"
@@ -285,6 +376,7 @@ describe("GoHighLevel webhook processor", () => {
     await processor.process(integrationEvent({
       event_type: "pipeline_stage_updated",
       opportunityId: "opp_SANITIZED_ORDER",
+      contactId: "ct_SANITIZED_ORDER",
       pipelineId: "pipe_TARGET",
       pipelineStageId: "stage_FACEBOOK",
       timestamp: "2026-06-13T14:00:00.000Z"

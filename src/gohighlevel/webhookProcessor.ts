@@ -85,20 +85,39 @@ export class GoHighLevelWebhookProcessor {
   async process(event: IntegrationEventRecord): Promise<GoHighLevelWebhookProcessingResult> {
     try {
       const parsed = parseGoHighLevelWebhook(event);
+      if (parsed.eventType === "unknown") {
+        await this.createMissingRequiredFieldIssue(parsed, event, ["event_type"]);
+        return {
+          status: "processed",
+          action: "created_reconciliation_issue",
+          reconciliationIssue: "gohighlevel_webhook_missing_event_type"
+        };
+      }
+
       if (!parsed.isRelevantEvent) {
         return { status: "ignored", action: "unsupported_event_type" };
       }
 
       if (!parsed.externalOpportunityId) {
-        await this.store.createReconciliationIssue({
-          issueType: "gohighlevel_webhook_missing_opportunity_id",
-          summary: "GoHighLevel webhook did not include a stable opportunity ID",
-          details: safeIssueDetails(parsed, event)
-        });
+        await this.createMissingRequiredFieldIssue(parsed, event, ["opportunity_id"]);
         return {
           status: "processed",
           action: "created_reconciliation_issue",
           reconciliationIssue: "gohighlevel_webhook_missing_opportunity_id"
+        };
+      }
+
+      const existing = await this.store.findOpportunity(parsed.externalOpportunityId);
+      if (
+        !parsed.externalContactId &&
+        !existing?.contactId &&
+        (parsed.isStageEvent || parsed.isOpportunityCreateEvent)
+      ) {
+        await this.createMissingRequiredFieldIssue(parsed, event, ["contact_id"]);
+        return {
+          status: "processed",
+          action: "created_reconciliation_issue",
+          reconciliationIssue: "gohighlevel_webhook_missing_contact_id"
         };
       }
 
@@ -120,7 +139,21 @@ export class GoHighLevelWebhookProcessor {
       const trustedWorkflowSource = sourceFromStage
         ? undefined
         : await this.resolveTrustedWorkflowSource(parsed, event);
-      const existing = await this.store.findOpportunity(parsed.externalOpportunityId);
+      if (
+        parsed.isOpportunityCreateEvent &&
+        !sourceFromStage &&
+        !trustedWorkflowSource &&
+        !parsed.invalidWorkflowLeadSource &&
+        (!existing || existing.originalLeadSource === "unknown")
+      ) {
+        await this.createMissingRequiredFieldIssue(parsed, event, ["lead_source"]);
+        return {
+          status: "processed",
+          action: "created_reconciliation_issue",
+          reconciliationIssue: "gohighlevel_webhook_missing_lead_source"
+        };
+      }
+
       const originalSourceUpdate = await this.resolveOriginalSourceUpdate(
         existing,
         parsed,
@@ -273,6 +306,29 @@ export class GoHighLevelWebhookProcessor {
     }
 
     return parsed.isOpportunityCreateEvent ? parsed.workflowLeadSource : undefined;
+  }
+
+  private async createMissingRequiredFieldIssue(
+    parsed: ParsedGoHighLevelWebhook,
+    event: IntegrationEventRecord,
+    missingRequiredFields: string[]
+  ): Promise<void> {
+    const issueType = missingFieldIssueType(missingRequiredFields);
+    logger.warn(
+      {
+        provider: "gohighlevel",
+        integrationEventId: event.id,
+        eventType: parsed.eventType,
+        missingRequiredFields,
+        fieldPresence: webhookFieldPresence(parsed)
+      },
+      "GoHighLevel webhook missing required durable matching fields"
+    );
+    await this.store.createReconciliationIssue({
+      issueType,
+      summary: "GoHighLevel webhook is missing required durable matching fields",
+      details: missingFieldIssueDetails(parsed, event, missingRequiredFields)
+    });
   }
 }
 
@@ -486,6 +542,53 @@ function safeIssueDetails(parsed: ParsedGoHighLevelWebhook, event: IntegrationEv
     status: parsed.status,
     eventTimestamp: parsed.eventTimestamp,
     testRunId: parsed.testRunId
+  };
+}
+
+function missingFieldIssueType(missingRequiredFields: string[]): string {
+  if (missingRequiredFields.includes("event_type")) {
+    return "gohighlevel_webhook_missing_event_type";
+  }
+  if (missingRequiredFields.includes("opportunity_id")) {
+    return "gohighlevel_webhook_missing_opportunity_id";
+  }
+  if (missingRequiredFields.includes("contact_id")) {
+    return "gohighlevel_webhook_missing_contact_id";
+  }
+  if (missingRequiredFields.includes("lead_source")) {
+    return "gohighlevel_webhook_missing_lead_source";
+  }
+  return "gohighlevel_webhook_missing_required_fields";
+}
+
+function missingFieldIssueDetails(
+  parsed: ParsedGoHighLevelWebhook,
+  event: IntegrationEventRecord,
+  missingRequiredFields: string[]
+): Record<string, unknown> {
+  return {
+    provider: "gohighlevel",
+    integrationEventId: event.id,
+    eventType: parsed.eventType,
+    receivedAt: event.receivedAt,
+    missingRequiredFields,
+    fieldPresence: webhookFieldPresence(parsed),
+    eventFingerprintPresent: Boolean(event.eventFingerprint),
+    externalEventIdPresent: Boolean(event.externalEventId || parsed.externalEventId),
+    needsReviewReason: "missing_durable_matching_fields"
+  };
+}
+
+function webhookFieldPresence(parsed: ParsedGoHighLevelWebhook): Record<string, boolean> {
+  return {
+    event_type: parsed.eventType !== "unknown",
+    opportunity_id: Boolean(parsed.externalOpportunityId),
+    contact_id: Boolean(parsed.externalContactId),
+    lead_source: Boolean(parsed.workflowLeadSource || parsed.invalidWorkflowLeadSource),
+    pipeline_id: Boolean(parsed.pipelineId),
+    stage_id: Boolean(parsed.stageId),
+    location_id: Boolean(parsed.locationId),
+    timestamp: Boolean(parsed.eventTimestamp)
   };
 }
 

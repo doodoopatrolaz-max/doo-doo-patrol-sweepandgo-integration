@@ -1528,7 +1528,7 @@ function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): D
   const groupsByKey = new Map<string, number>();
 
   for (const row of rows) {
-    const bucket = classifyDashboardSource(row).bucket;
+    const bucket = reportingSourceBucket(row);
     const keys = sourceMetricIdentityKeys(row);
     if (keys.length === 0) {
       unkeyedBuckets.push(bucket);
@@ -1573,6 +1573,56 @@ function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): D
   }
 
   return [...groups.map((group) => group.bucket), ...unkeyedBuckets];
+}
+
+function reportingSourceBucket(row: Record<string, unknown>): DashboardSourceBucket {
+  const classifiedBucket = classifyDashboardSource(row).bucket;
+  const officialSignupBucket = officialSignupSourceBucket(row);
+  if (classifiedBucket === "website_organic" && officialSignupBucket === "other_unknown") {
+    return officialSignupBucket;
+  }
+  return classifiedBucket;
+}
+
+function officialSignupSourceBucket(row: Record<string, unknown>): DashboardSourceBucket | undefined {
+  const officialEvidence = collectOfficialSignupSourceEvidence(row);
+  let selected: DashboardSourceBucket | undefined;
+  for (const evidence of officialEvidence) {
+    const bucket = classifyDashboardSource(evidence).bucket;
+    selected = selected ? higherPriorityDashboardSourceBucket(selected, bucket) : bucket;
+  }
+  return selected;
+}
+
+function collectOfficialSignupSourceEvidence(value: unknown, output: Record<string, unknown>[] = []): Record<string, unknown>[] {
+  const record = asRecord(value);
+  if (record) {
+    const provider = (
+      stringValue(record.source_provider)
+      ?? stringValue(record.sourceProvider)
+      ?? stringValue(record.provider)
+    )?.toLowerCase();
+    const fromOfficialSignupSource = provider === "sweepandgo_new_client_email";
+    const hasHowHeardSource = Boolean(findFirstNestedString(record, [
+      "how_heard_answer",
+      "how_heard_about_us",
+      "how_you_heard_about_us"
+    ]));
+    if (fromOfficialSignupSource && hasHowHeardSource) {
+      output.push(record);
+    }
+    for (const entry of Object.values(record)) {
+      collectOfficialSignupSourceEvidence(entry, output);
+    }
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectOfficialSignupSourceEvidence(item, output);
+    }
+  }
+  return output;
 }
 
 function sourceMetricIdentityKeys(row: Record<string, unknown>): string[] {

@@ -148,6 +148,19 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.bucket, "other_unknown");
   });
 
+  it("maps Local Event to Other/Unknown until a dedicated bucket is approved", () => {
+    const result = classifyDashboardSource({
+      source: "other",
+      source_raw: "Local Event",
+      source_provider: "sweepandgo_new_client_email",
+      evidence: {
+        how_heard_about_us: "Local Event"
+      }
+    });
+
+    assert.equal(result.bucket, "other_unknown");
+  });
+
   it("uses owner-approved source bucket precedence for the same safe identity", () => {
     assert.equal(higherPriorityDashboardSourceBucket("website_organic", "website_paid"), "website_paid");
     assert.equal(higherPriorityDashboardSourceBucket("facebook", "website_organic"), "facebook");

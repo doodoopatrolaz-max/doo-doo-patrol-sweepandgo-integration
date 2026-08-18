@@ -88,6 +88,14 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.bucket, "facebook");
   });
 
+  it("maps Social Media without platform details to Facebook by owner-approved default", () => {
+    const result = classifyDashboardSource({
+      how_heard_about_us: "Social Media"
+    });
+
+    assert.equal(result.bucket, "facebook");
+  });
+
   it("maps Facebook in how-heard details to Facebook", () => {
     const result = classifyDashboardSource({
       how_heard_about_us: "Social Media",
@@ -95,6 +103,15 @@ describe("dashboard source attribution classifier", () => {
     });
 
     assert.equal(result.bucket, "facebook");
+  });
+
+  it("does not map Social Media with a different explicit platform to Facebook", () => {
+    const result = classifyDashboardSource({
+      how_heard_about_us: "Social Media",
+      how_heard_about_us_details: "TikTok"
+    });
+
+    assert.equal(result.bucket, "other_unknown");
   });
 
   it("maps referral source to Referral", () => {

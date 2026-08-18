@@ -949,6 +949,142 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
   });
 
+  it("maps Social Media new recurring customer evidence without platform details to Facebook", async () => {
+    class SocialMediaNewRecurringPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("direct_signup_reporting_leads")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              dashboard_email: "social-media-recurring@example.invalid",
+              source_evidence: [{
+                source: "other",
+                source_raw: "Social Media",
+                source_provider: "sweepandgo_new_client_email",
+                evidence: {
+                  clean_up_frequency: "Twice Per Month",
+                  how_heard_about_us: "Social Media"
+                }
+              }]
+            }]
+          };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: 92,
+              dashboard_email: "social-media-recurring@example.invalid",
+              source_evidence: [{
+                source: "other",
+                source_raw: "Social Media",
+                source_provider: "sweepandgo_new_client_email",
+                evidence: {
+                  clean_up_frequency: "Twice Per Month",
+                  how_heard_about_us: "Social Media"
+                }
+              }]
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const baseline = await new PostgresDashboardDataSource(new FakePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-17", end: "2026-08-17" }));
+    const summary = await new PostgresDashboardDataSource(new SocialMediaNewRecurringPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-17", end: "2026-08-17" }));
+
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.leadSourceBreakdown.facebook, 1);
+    assert.equal(summary.leadSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.facebook, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.facebook.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.facebook.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.facebook.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
+    assert.equal(summary.oneTimeCleanups, baseline.oneTimeCleanups);
+    assert.equal(summary.cancellations, baseline.cancellations);
+    assert.equal(summary.totalActiveClients, baseline.totalActiveClients);
+    assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
+  });
+
+  it("does not let a prior-year opportunity suppress current direct recurring signup lead credit", async () => {
+    class PriorYearOpportunitySignupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("direct_signup_reporting_leads")) {
+          assert(sql.includes("INTERVAL '180 days'"));
+          assert(sql.includes("EXTRACT(YEAR"));
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              dashboard_email: "reactivated-direct-signup@example.invalid",
+              source_evidence: [{
+                source: "website",
+                source_raw: "Search Engine",
+                source_provider: "sweepandgo_new_client_email",
+                evidence: {
+                  clean_up_frequency: "Once A Week",
+                  how_heard_about_us: "Search Engine",
+                  how_heard_about_us_details: "Google"
+                }
+              }]
+            }]
+          };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: 92,
+              dashboard_email: "reactivated-direct-signup@example.invalid",
+              source_evidence: [{
+                source: "website",
+                source_raw: "Search Engine",
+                source_provider: "sweepandgo_new_client_email",
+                evidence: {
+                  clean_up_frequency: "Once A Week",
+                  how_heard_about_us: "Search Engine",
+                  how_heard_about_us_details: "Google"
+                }
+              }]
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new PriorYearOpportunitySignupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-17", end: "2026-08-17" }));
+
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.leadSourceBreakdown.website_paid, 1);
+    assert.equal(summary.closeRateMetrics.directSignupReportingLeads, 1);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.website_paid, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.closeRate, 100);
+  });
+
   it("uses Website Paid over Website Organic for the same safe identity without double-counting leads", async () => {
     class SourcePrecedencePool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

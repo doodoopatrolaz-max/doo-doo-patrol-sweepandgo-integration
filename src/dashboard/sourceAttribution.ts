@@ -87,7 +87,16 @@ export function classifyDashboardSource(
     .map((entry) => entry.value.trim().toLowerCase());
   const explicitSource = firstStringField(flattened, ["original_lead_source", "lead_source", "source", "customer_source", "acquisition_source"]);
 
-  if (explicitSource === "facebook" || tags.includes("facebook lead") || /\b(facebook|instagram|meta)\b/.test(text)) {
+  if (hasExplicitNonFacebookSocialMediaProof(flattened)) {
+    return sourceResult("other_unknown", flattened);
+  }
+
+  if (
+    explicitSource === "facebook" ||
+    tags.includes("facebook lead") ||
+    /\b(facebook|instagram|meta)\b/.test(text) ||
+    hasDefaultFacebookSocialMediaProof(flattened)
+  ) {
     return sourceResult("facebook", flattened);
   }
 
@@ -169,6 +178,30 @@ function sourceResult(
     referralProof: overrides.referralProof ?? false,
     truckWrapProof: overrides.truckWrapProof ?? false
   };
+}
+
+function hasDefaultFacebookSocialMediaProof(flattened: EvidenceEntry[]): boolean {
+  const answer = firstStringField(flattened, ["how_heard_answer", "how_heard_about_us", "how_you_heard_about_us"]);
+  if (!answer || !/\bsocial media\b/.test(answer)) {
+    return false;
+  }
+
+  const detail = firstStringField(flattened, ["how_heard_about_us_details", "how_heard_details", "source_detail", "source_details"]);
+  return !detail || /\b(facebook|fb|meta)\b/.test(detail);
+}
+
+function hasExplicitNonFacebookSocialMediaProof(flattened: EvidenceEntry[]): boolean {
+  const answer = firstStringField(flattened, ["how_heard_answer", "how_heard_about_us", "how_you_heard_about_us"]);
+  if (!answer || !/\bsocial media\b/.test(answer)) {
+    return false;
+  }
+
+  const detail = firstStringField(flattened, ["how_heard_about_us_details", "how_heard_details", "source_detail", "source_details"]);
+  return Boolean(
+    detail &&
+    /\b(instagram|tiktok|tik tok|youtube|nextdoor|twitter|x\.com|linkedin|pinterest|snapchat)\b/.test(detail) &&
+    !/\b(facebook|fb|meta)\b/.test(detail)
+  );
 }
 
 function hasPaidProof(flattened: EvidenceEntry[]): boolean {

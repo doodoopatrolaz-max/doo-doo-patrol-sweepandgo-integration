@@ -93,6 +93,20 @@ describe("Sweep&Go new-client email source capture", () => {
     assert.equal(parsed.sourceBucket, "website_paid");
   });
 
+  it("maps Social Media without details to Facebook", () => {
+    const parsed = parseSweepAndGoNewClientEmail({
+      ...baseEmail,
+      messageId: "msg-social-media",
+      body: baseEmail.body
+        .replace("One Time", "Twice Per Month")
+        .replace("Vehicle Signage", "Social Media")
+    });
+
+    assert.equal(parsed.howHeardAboutUs, "Social Media");
+    assert.equal(parsed.howHeardAboutUsDetails, undefined);
+    assert.equal(parsed.sourceBucket, "facebook");
+  });
+
   it("maps recurring Referred By Family Or Friend email evidence to Referral", () => {
     const parsed = parseSweepAndGoNewClientEmail({
       ...baseEmail,

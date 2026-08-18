@@ -1201,6 +1201,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
            LEFT JOIN contacts oct ON oct.id = o.contact_id
            WHERE ${reportingLeadExclusionSql("o")}
              AND o.original_lead_date IS NOT NULL
+             AND ${recentOpportunityLeadForSignupSql("o", "c")}
              AND ${safeCustomerOpportunityIdentityMatchSql("c", "ct", "o", "oct")}
          )
        GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
@@ -1363,6 +1364,14 @@ function safeCustomerOpportunityIdentityMatchSql(
                 AND ${opportunityPhone} IS NOT NULL
                 AND ${customerPhone} = ${opportunityPhone}
               )
+            )`;
+}
+
+function recentOpportunityLeadForSignupSql(opportunityAlias: string, customerAlias: string): string {
+  const opportunityDate = leadReportingDateSql(`${opportunityAlias}.original_lead_date`);
+  return `(
+              ${opportunityDate} >= (${customerAlias}.first_recurring_date - INTERVAL '180 days')::date
+              AND EXTRACT(YEAR FROM ${opportunityDate}) = EXTRACT(YEAR FROM ${customerAlias}.first_recurring_date)
             )`;
 }
 

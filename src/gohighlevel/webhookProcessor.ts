@@ -21,6 +21,11 @@ type ParsedGoHighLevelWebhook = {
   externalEventId?: string;
   externalOpportunityId?: string;
   externalContactId?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactFullName?: string;
   locationId?: string;
   pipelineId?: string;
   pipelineName?: string;
@@ -167,12 +172,13 @@ export class GoHighLevelWebhookProcessor {
             provider: "gohighlevel",
             locationId: parsed.locationId,
             webhookEventId: event.id
-          })
+          }, contactIdentityFromWebhook(parsed))
         : undefined;
 
       const stored = await this.store.upsertOpportunity({
         externalOpportunityId: parsed.externalOpportunityId,
         externalContactId: parsed.externalContactId,
+        contactIdentity: contactIdentityFromWebhook(parsed),
         locationId: parsed.locationId,
         pipelineId: parsed.pipelineId,
         pipelineName: parsed.pipelineName ?? this.stageConfig.pipelineName ?? "unknown",
@@ -195,6 +201,7 @@ export class GoHighLevelWebhookProcessor {
           sourceNormalized: normalizeCustomerSource(parsed.sourceRaw),
           workflowLeadSource: parsed.workflowLeadSource,
           workflowLeadSourceRejected: parsed.invalidWorkflowLeadSource ? true : undefined,
+          contactIdentityPresent: contactIdentityPresent(parsed) || undefined,
           eventType: parsed.eventType,
           webhookEventId: event.id,
           webhookEvidence: parsed.isStageEvent
@@ -381,6 +388,43 @@ export function parseGoHighLevelWebhook(event: IntegrationEventRecord): ParsedGo
       root.contact_id,
       contact.id
     ]),
+    contactEmail: normalizeEmail(firstNestedString([contact, opportunity, customData, root], [
+      "email",
+      "email_address",
+      "emailAddress",
+      "contact_email",
+      "contactEmail"
+    ])),
+    contactPhone: normalizePhone(firstNestedString([contact, opportunity, customData, root], [
+      "phone",
+      "phone_number",
+      "phoneNumber",
+      "cell_phone",
+      "cellPhone",
+      "cell_phone_number",
+      "cellPhoneNumber",
+      "mobile",
+      "contact_phone",
+      "contactPhone"
+    ])),
+    contactFirstName: firstNestedString([contact, opportunity, customData, root], [
+      "first_name",
+      "firstName",
+      "contact_first_name",
+      "contactFirstName"
+    ]),
+    contactLastName: firstNestedString([contact, opportunity, customData, root], [
+      "last_name",
+      "lastName",
+      "contact_last_name",
+      "contactLastName"
+    ]),
+    contactFullName: firstNestedString([contact, customData, root], [
+      "full_name",
+      "fullName",
+      "contact_name",
+      "contactName"
+    ]) ?? firstNestedString([contact], ["name"]),
     locationId: firstString([opportunity.locationId, customData.locationId, root.locationId, contact.locationId]),
     pipelineId: firstString([
       opportunity.pipelineId,
@@ -492,6 +536,26 @@ function parseWorkflowLeadSource(value: string | undefined): {
   }
 
   return { invalidWorkflowLeadSource: "unsupported" };
+}
+
+function contactIdentityFromWebhook(parsed: ParsedGoHighLevelWebhook) {
+  return {
+    primaryEmail: parsed.contactEmail,
+    primaryPhone: parsed.contactPhone,
+    firstName: parsed.contactFirstName,
+    lastName: parsed.contactLastName,
+    fullName: parsed.contactFullName
+  };
+}
+
+function contactIdentityPresent(parsed: ParsedGoHighLevelWebhook): boolean {
+  return Boolean(
+    parsed.contactEmail ||
+    parsed.contactPhone ||
+    parsed.contactFirstName ||
+    parsed.contactLastName ||
+    parsed.contactFullName
+  );
 }
 
 function shouldUpdateCurrentStage(
@@ -626,6 +690,63 @@ function firstPresentString(values: unknown[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function firstNestedString(values: unknown[], keys: string[]): string | undefined {
+  const normalizedKeys = new Set(keys.map(normalizeSearchKey));
+  for (const value of values) {
+    const found = findFirstNestedValue(value, normalizedKeys);
+    const string = firstString([found]);
+    if (string) {
+      return string;
+    }
+  }
+  return undefined;
+}
+
+function findFirstNestedValue(value: unknown, keys: Set<string>): unknown {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirstNestedValue(item, keys);
+      if (found !== undefined && found !== null && found !== "") {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (keys.has(normalizeSearchKey(key)) && nested !== undefined && nested !== null && nested !== "") {
+      const record = asRecord(nested);
+      if (record && "value" in record) {
+        return record.value;
+      }
+      return nested;
+    }
+  }
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    const found = findFirstNestedValue(nested, keys);
+    if (found !== undefined && found !== null && found !== "") {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+function normalizeSearchKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeEmail(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && normalized.includes("@") ? normalized : undefined;
+}
+
+function normalizePhone(value: string | undefined): string | undefined {
+  const digits = value?.replace(/\D/g, "") ?? "";
+  return digits.length >= 7 ? digits : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

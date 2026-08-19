@@ -1318,8 +1318,24 @@ function matchedCustomerSourceEvidenceJoin(opportunityAlias: string): string {
                       'source_evidence', COALESCE(matched_customer_evidence.source_evidence, '[]'::jsonb)
                     )
                   ) AS source_evidence
-           FROM lead_customer_matches lcm_source
-           JOIN customers mc ON mc.id = lcm_source.sweepgo_customer_id
+           FROM (
+             SELECT DISTINCT mc.*
+             FROM lead_customer_matches lcm_source
+             JOIN customers mc ON mc.id = lcm_source.sweepgo_customer_id
+             WHERE lcm_source.status = 'matched'
+               AND (
+                 lcm_source.bi_lead_opportunity_id = ${opportunityAlias}.id
+                 OR lcm_source.ghl_lead_opportunity_id = ${opportunityAlias}.external_opportunity_id
+               )
+             UNION
+             SELECT DISTINCT mc.*
+             FROM customers mc
+             LEFT JOIN contacts mct ON mct.id = mc.contact_id
+             LEFT JOIN contacts oct_source ON oct_source.id = ${opportunityAlias}.contact_id
+             WHERE mc.first_recurring_date IS NOT NULL
+               AND ${recentOpportunityLeadForSignupSql(opportunityAlias, "mc")}
+               AND ${safeCustomerOpportunityIdentityMatchSql("mc", "mct", opportunityAlias, "oct_source")}
+           ) mc
            LEFT JOIN LATERAL (
              SELECT jsonb_agg(
                       jsonb_build_object(
@@ -1332,11 +1348,6 @@ function matchedCustomerSourceEvidenceJoin(opportunityAlias: string): string {
              FROM customer_sources cs
              WHERE cs.customer_id = mc.id
            ) matched_customer_evidence ON TRUE
-           WHERE lcm_source.status = 'matched'
-             AND (
-               lcm_source.bi_lead_opportunity_id = ${opportunityAlias}.id
-               OR lcm_source.ghl_lead_opportunity_id = ${opportunityAlias}.external_opportunity_id
-             )
          ) matched_customer_sources ON TRUE`;
 }
 

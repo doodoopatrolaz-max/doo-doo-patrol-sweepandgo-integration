@@ -4,6 +4,7 @@ import type { AppConfig } from "../src/config.ts";
 import { GoHighLevelWebhookProcessor, parseGoHighLevelWebhook } from "../src/gohighlevel/webhookProcessor.ts";
 import type {
   ExistingOpportunityRecord,
+  GoHighLevelContactIdentityInput,
   GoHighLevelStageHistoryInput,
   GoHighLevelWebhookOpportunityInput,
   GoHighLevelWebhookStore,
@@ -70,12 +71,25 @@ function integrationEvent(
 
 class FakeGoHighLevelWebhookStore implements GoHighLevelWebhookStore {
   readonly contacts = new Map<string, string>();
+  readonly contactIdentities = new Map<string, GoHighLevelContactIdentityInput>();
   readonly opportunities = new Map<string, ExistingOpportunityRecord>();
   readonly stageHistory: GoHighLevelStageHistoryInput[] = [];
   readonly issues: ReconciliationIssueInput[] = [];
 
-  async upsertContactByExternalId(externalContactId: string): Promise<string> {
+  async upsertContactByExternalId(
+    externalContactId: string,
+    _metadata: Record<string, unknown> = {},
+    identity: GoHighLevelContactIdentityInput = {}
+  ): Promise<string> {
     const existing = this.contacts.get(externalContactId);
+    const existingIdentity = this.contactIdentities.get(externalContactId) ?? {};
+    this.contactIdentities.set(externalContactId, {
+      primaryEmail: existingIdentity.primaryEmail ?? identity.primaryEmail,
+      primaryPhone: existingIdentity.primaryPhone ?? identity.primaryPhone,
+      firstName: existingIdentity.firstName ?? identity.firstName,
+      lastName: existingIdentity.lastName ?? identity.lastName,
+      fullName: existingIdentity.fullName ?? identity.fullName
+    });
     if (existing) {
       return existing;
     }
@@ -106,6 +120,7 @@ class FakeGoHighLevelWebhookStore implements GoHighLevelWebhookStore {
     const record: ExistingOpportunityRecord = {
       id: existing?.id ?? `opportunity_${this.opportunities.size + 1}`,
       contactId,
+      metadata: { ...existing?.metadata, ...input.metadata, contactIdentity: input.contactIdentity },
       externalOpportunityId: input.externalOpportunityId,
       pipelineId: input.pipelineId ?? existing?.pipelineId,
       stageId: updateCurrentStage ? input.stageId ?? existing?.stageId : existing?.stageId,
@@ -113,8 +128,7 @@ class FakeGoHighLevelWebhookStore implements GoHighLevelWebhookStore {
       status: input.status ?? existing?.status,
       originalLeadSource,
       originalLeadDate: existing?.originalLeadDate ?? input.originalLeadDate,
-      currentStageEnteredAt,
-      metadata: { ...existing?.metadata, ...input.metadata }
+      currentStageEnteredAt
     };
 
     this.opportunities.set(input.externalOpportunityId, record);
@@ -201,6 +215,67 @@ describe("GoHighLevel webhook processor", () => {
     assert.equal(opportunity?.originalLeadDate, "2026-06-13T09:00:00.000Z");
     assert.equal(opportunity?.stageId, "stage_FOLLOW_UP");
     assert.equal(store.stageHistory.length, 2);
+  });
+
+  it("stores contact identity from a GHL webhook when the payload includes it", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      event_type: "opportunity_created",
+      opportunity_id: "opp_SANITIZED_CONTACT_IDENTITY",
+      contact_id: "ct_SANITIZED_CONTACT_IDENTITY",
+      pipeline_id: "pipe_TARGET",
+      pipeline_stage_id: "stage_WEBSITE",
+      lead_source: "website",
+      contact: {
+        email: "  LEAD@example.invalid ",
+        phone: "(602) 555-0100",
+        firstName: "Sample",
+        lastName: "Lead"
+      },
+      timestamp: "2026-06-13T09:00:00.000Z"
+    }, "evt_contact_identity"));
+
+    const identity = store.contactIdentities.get("ct_SANITIZED_CONTACT_IDENTITY");
+    assert.equal(identity?.primaryEmail, "lead@example.invalid");
+    assert.equal(identity?.primaryPhone, "6025550100");
+    assert.equal(identity?.firstName, "Sample");
+    assert.equal(identity?.lastName, "Lead");
+    assert.equal(store.opportunities.get("opp_SANITIZED_CONTACT_IDENTITY")?.metadata.contactIdentityPresent, true);
+  });
+
+  it("does not overwrite existing contact identity from later GHL webhooks", async () => {
+    const store = new FakeGoHighLevelWebhookStore();
+    store.contacts.set("ct_SANITIZED_CONTACT_IDENTITY", "contact_existing");
+    store.contactIdentities.set("ct_SANITIZED_CONTACT_IDENTITY", {
+      primaryEmail: "existing@example.invalid",
+      primaryPhone: "6025550101",
+      firstName: "Existing"
+    });
+    const processor = new GoHighLevelWebhookProcessor(store, config);
+
+    await processor.process(integrationEvent({
+      event_type: "opportunity_created",
+      opportunity_id: "opp_SANITIZED_CONTACT_IDENTITY_UPDATE",
+      contact_id: "ct_SANITIZED_CONTACT_IDENTITY",
+      pipeline_id: "pipe_TARGET",
+      pipeline_stage_id: "stage_WEBSITE",
+      lead_source: "website",
+      contact: {
+        email: "replacement@example.invalid",
+        phone: "6025550199",
+        firstName: "Replacement",
+        lastName: "Filled"
+      },
+      timestamp: "2026-06-13T09:00:00.000Z"
+    }, "evt_contact_identity_update"));
+
+    const identity = store.contactIdentities.get("ct_SANITIZED_CONTACT_IDENTITY");
+    assert.equal(identity?.primaryEmail, "existing@example.invalid");
+    assert.equal(identity?.primaryPhone, "6025550101");
+    assert.equal(identity?.firstName, "Existing");
+    assert.equal(identity?.lastName, "Filled");
   });
 
   it("stores wrong-pipeline events without classifying original lead source", async () => {

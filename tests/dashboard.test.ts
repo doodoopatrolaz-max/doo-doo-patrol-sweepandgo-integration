@@ -1471,6 +1471,107 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(fullRange.closeRateMetrics.totalCloseRate, 100);
   });
 
+  it("lets official Social Media signup evidence move a weak Website Organic lead to Facebook for the same identity", async () => {
+    const officialSocialMediaEvidence = [{
+      source: "facebook",
+      source_raw: "Social Media",
+      source_provider: "sweepandgo_new_client_email",
+      evidence: {
+        clean_up_frequency: "Once A Week",
+        how_heard_about_us: "Social Media"
+      }
+    }];
+
+    class ExistingOrganicLeadLaterSocialMediaSignupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        const rangeStart = String(params[0] ?? "");
+        if (sql.includes("matched_future_conversion_source_rows")) {
+          return { rows: [] };
+        }
+        if (sql.includes("direct_signup_reporting_leads")) {
+          assert(sql.includes("NOT EXISTS"));
+          assert(sql.includes("opportunities o"));
+          assert(sql.includes("regexp_replace"));
+          return { rows: [] };
+        }
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          assert(sql.includes("FROM customers mc"));
+          assert(sql.includes("LEFT JOIN contacts mct"));
+          assert(sql.includes("LEFT JOIN contacts oct_source"));
+          if (rangeStart === "2026-08-18") {
+            return {
+              rows: [
+                {
+                  original_lead_source: "website",
+                  source: "website",
+                  metadata: { workflowLeadSource: "website" },
+                  pipeline_name: "New Lead to Onboarding",
+                  stage_name: "Website Quote Lead",
+                  dashboard_email: "same-person@example.invalid",
+                  matched_customer_source_evidence: [{
+                    source: "unknown",
+                    source_raw: "unknown",
+                    source_evidence: officialSocialMediaEvidence
+                  }]
+                },
+                {
+                  original_lead_source: "website",
+                  source: "website",
+                  metadata: { workflowLeadSource: "website" },
+                  pipeline_name: "New Lead to Onboarding",
+                  stage_name: "Website Quote Lead",
+                  dashboard_email: "organic-only@example.invalid"
+                }
+              ]
+            };
+          }
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          if (rangeStart === "2026-08-18") {
+            return {
+              rows: [{
+                source: "unknown",
+                source_raw: "unknown",
+                metadata: {},
+                monthly_recurring_revenue: null,
+                dashboard_email: "same-person@example.invalid",
+                prior_period_lead_conversion: false,
+                source_evidence: officialSocialMediaEvidence
+              }]
+            };
+          }
+          return { rows: [] };
+        }
+        if (sql.includes("COUNT(*) FILTER") && sql.includes("FROM lead_customer_matches")) {
+          return {
+            rows: [{
+              manual_review: 0,
+              facebook_prior_period: 0,
+              website_prior_period: 0,
+              total_prior_period: 0
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new ExistingOrganicLeadLaterSocialMediaSignupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-18", end: "2026-08-18" }));
+
+    assert.equal(summary.totalLeads, 2);
+    assert.equal(summary.leadSourceBreakdown.website_organic, 1);
+    assert.equal(summary.leadSourceBreakdown.facebook, 1);
+    assert.equal(summary.leadSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.facebook, 1);
+    assert.equal(summary.closeRateMetrics.facebookMatchedConversions, 1);
+    assert.equal(summary.closeRateMetrics.facebookCloseRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 50);
+  });
+
   it("does not let official unknown signup evidence override stronger paid lead proof", async () => {
     class PaidLeadLaterUnknownSignupPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

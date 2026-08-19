@@ -55,9 +55,18 @@ export type ExistingOpportunityRecord = {
   metadata: Record<string, unknown>;
 };
 
+export type GoHighLevelContactIdentityInput = {
+  primaryEmail?: string;
+  primaryPhone?: string;
+  firstName?: string;
+  lastName?: string;
+  fullName?: string;
+};
+
 export type GoHighLevelWebhookOpportunityInput = {
   externalOpportunityId: string;
   externalContactId?: string;
+  contactIdentity?: GoHighLevelContactIdentityInput;
   locationId?: string;
   pipelineId?: string;
   pipelineName: string;
@@ -103,7 +112,11 @@ export type ReconciliationIssueInput = {
 };
 
 export interface GoHighLevelWebhookStore {
-  upsertContactByExternalId(externalContactId: string, metadata?: Record<string, unknown>): Promise<string>;
+  upsertContactByExternalId(
+    externalContactId: string,
+    metadata?: Record<string, unknown>,
+    identity?: GoHighLevelContactIdentityInput
+  ): Promise<string>;
   findOpportunity(externalOpportunityId: string): Promise<ExistingOpportunityRecord | undefined>;
   upsertOpportunity(input: GoHighLevelWebhookOpportunityInput): Promise<ExistingOpportunityRecord>;
   insertStageHistory(input: GoHighLevelStageHistoryInput): Promise<boolean>;
@@ -119,16 +132,38 @@ export class PostgresGoHighLevelWebhookStore implements GoHighLevelWebhookStore 
 
   async upsertContactByExternalId(
     externalContactId: string,
-    metadata: Record<string, unknown> = {}
+    metadata: Record<string, unknown> = {},
+    identity: GoHighLevelContactIdentityInput = {}
   ): Promise<string> {
     const result = await this.pool.query(
-      `INSERT INTO contacts (external_ghl_id, metadata)
-       VALUES ($1, $2::jsonb)
+      `INSERT INTO contacts (
+         external_ghl_id,
+         primary_email,
+         primary_phone,
+         first_name,
+         last_name,
+         full_name,
+         metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
        ON CONFLICT (external_ghl_id) DO UPDATE
-       SET metadata = contacts.metadata || EXCLUDED.metadata,
+       SET primary_email = COALESCE(contacts.primary_email, EXCLUDED.primary_email),
+           primary_phone = COALESCE(contacts.primary_phone, EXCLUDED.primary_phone),
+           first_name = COALESCE(contacts.first_name, EXCLUDED.first_name),
+           last_name = COALESCE(contacts.last_name, EXCLUDED.last_name),
+           full_name = COALESCE(contacts.full_name, EXCLUDED.full_name),
+           metadata = contacts.metadata || EXCLUDED.metadata,
            updated_at = NOW()
        RETURNING id`,
-      [externalContactId, JSON.stringify(metadata)]
+      [
+        externalContactId,
+        identity.primaryEmail ?? null,
+        identity.primaryPhone ?? null,
+        identity.firstName ?? null,
+        identity.lastName ?? null,
+        identity.fullName ?? null,
+        JSON.stringify(metadata)
+      ]
     );
 
     return String(result.rows[0].id);
@@ -152,7 +187,7 @@ export class PostgresGoHighLevelWebhookStore implements GoHighLevelWebhookStore 
       ? await this.upsertContactByExternalId(input.externalContactId, {
           provider: "gohighlevel",
           locationId: input.locationId
-        })
+        }, input.contactIdentity)
       : undefined;
 
     const result = await this.pool.query(

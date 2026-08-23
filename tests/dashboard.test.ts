@@ -1172,6 +1172,81 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
   });
 
+  it("normalizes US country code phone matches before applying Website Paid over Website Organic", async () => {
+    class CountryCodePhoneSourcePrecedencePool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return {
+            rows: [
+              {
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead",
+                dashboard_contact_id: "contact-organic-ghl",
+                dashboard_phone: "+1 (602) 555-0100"
+              },
+              {
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead",
+                dashboard_contact_id: "contact-organic-only",
+                dashboard_phone: "(602) 555-0101"
+              }
+            ]
+          };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: 92,
+              dashboard_contact_id: "contact-paid-customer",
+              dashboard_phone: "602.555.0100",
+              source_evidence: [{
+                source: "website",
+                source_raw: "Search Engine",
+                source_provider: "owner_confirmed_new_client_email",
+                evidence: {
+                  how_heard_answer: "Search Engine",
+                  how_heard_about_us_details: "Google"
+                }
+              }]
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new CountryCodePhoneSourcePrecedencePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-22", end: "2026-08-22" }));
+
+    assert.equal(summary.totalLeads, 2);
+    assert.deepEqual(summary.leadSourceBreakdown, {
+      website_paid: 1,
+      website_organic: 1,
+      facebook: 0,
+      referral: 0,
+      truck_wrap: 0,
+      other_unknown: 0
+    });
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.website_paid, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_paid.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.website_organic.conversions, 0);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 50);
+  });
+
   it("links an existing organic lead to a later paid direct signup without creating a second lead", async () => {
     class ExistingLeadLaterSignupPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {
@@ -1205,6 +1280,7 @@ describe("dashboard KPI aggregation", () => {
           assert(sql.includes("NOT EXISTS"));
           assert(sql.includes("lead_customer_matches"));
           assert(sql.includes("regexp_replace"));
+          assert(sql.includes("substring("));
           return { rows: [] };
         }
         if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {

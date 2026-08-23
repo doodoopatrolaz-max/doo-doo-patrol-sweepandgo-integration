@@ -1387,7 +1387,12 @@ function recentOpportunityLeadForSignupSql(opportunityAlias: string, customerAli
 }
 
 function normalizedPhoneSql(column: string): string {
-  return `NULLIF(regexp_replace(${column}, '\\D', '', 'g'), '')`;
+  const digits = `NULLIF(regexp_replace(${column}, '\\D', '', 'g'), '')`;
+  return `(CASE
+                WHEN ${digits} IS NULL THEN NULL
+                WHEN length(${digits}) = 11 AND left(${digits}, 1) = '1' THEN substring(${digits} from 2)
+                ELSE ${digits}
+              END)`;
 }
 
 export class EmptyDashboardDataSource implements DashboardDataSource {
@@ -1909,7 +1914,8 @@ function normalizeEmail(value: string | undefined): string | undefined {
 
 function normalizePhone(value: string | undefined): string | undefined {
   const digits = value?.replace(/\D/g, "") ?? "";
-  return digits.length >= 7 ? digits : undefined;
+  const normalized = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return normalized.length >= 7 ? normalized : undefined;
 }
 
 function normalizeTextKey(value: string | undefined): string | undefined {

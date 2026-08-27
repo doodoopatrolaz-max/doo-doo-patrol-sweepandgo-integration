@@ -108,6 +108,23 @@ class FakePool {
   }
 }
 
+function strongPriorSourceCustomer(email: string, matchedLeadSourceEvidence: Array<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    source: "unknown",
+    source_raw: "Other",
+    metadata: {},
+    monthly_recurring_revenue: null,
+    dashboard_email: email,
+    source_evidence: [{
+      source: "other",
+      source_raw: "Other",
+      source_provider: "sweepandgo_new_client_email",
+      evidence: { how_heard_about_us: "Other" }
+    }],
+    matched_lead_source_evidence: matchedLeadSourceEvidence
+  };
+}
+
 class GoogleSpendPool extends FakePool {
   private readonly input: {
     metaSpend: number;
@@ -1410,7 +1427,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(fullRange.closeRateMetrics.websiteCloseRate, 100);
   });
 
-  it("lets official Local Event signup evidence override a weak Website Organic lead for the same identity", async () => {
+  it("keeps Website Organic when later official signup evidence is only Other/Unknown for the same identity", async () => {
     const officialLocalEventEvidence = [{
       source: "other",
       source_raw: "Local Event",
@@ -1483,7 +1500,14 @@ describe("dashboard KPI aggregation", () => {
               monthly_recurring_revenue: null,
               dashboard_email: "existing-local-event-lead@example.invalid",
               prior_period_lead_conversion: sql.includes("AS prior_period_lead_conversion") && rangeStart === "2026-08-09",
-              source_evidence: officialLocalEventEvidence
+              source_evidence: officialLocalEventEvidence,
+              matched_lead_source_evidence: [{
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead"
+              }]
             };
             if (sql.includes("AND NOT EXISTS")) {
               return rangeStart === "2026-08-09"
@@ -1524,10 +1548,10 @@ describe("dashboard KPI aggregation", () => {
     const fullRange = await service.getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-02", end: "2026-08-09" }));
 
     assert.equal(originalLeadDay.totalLeads, 1);
-    assert.equal(originalLeadDay.leadSourceBreakdown.website_organic, 0);
-    assert.equal(originalLeadDay.leadSourceBreakdown.other_unknown, 1);
+    assert.equal(originalLeadDay.leadSourceBreakdown.website_organic, 1);
+    assert.equal(originalLeadDay.leadSourceBreakdown.other_unknown, 0);
     assert.equal(originalLeadDay.newRecurringCustomers, 0);
-    assert.equal(originalLeadDay.closeRateMetrics.sourceBreakdown.other_unknown.conversions, 1);
+    assert.equal(originalLeadDay.closeRateMetrics.sourceBreakdown.website_organic.conversions, 1);
 
     assert.equal(signupDay.totalLeads, 0);
     assert.equal(signupDay.newRecurringCustomers, 1);
@@ -1536,15 +1560,50 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(signupDay.closeRateMetrics.directSignupReportingLeads, 0);
 
     assert.equal(fullRange.totalLeads, 1);
-    assert.equal(fullRange.leadSourceBreakdown.website_organic, 0);
-    assert.equal(fullRange.leadSourceBreakdown.other_unknown, 1);
+    assert.equal(fullRange.leadSourceBreakdown.website_organic, 1);
+    assert.equal(fullRange.leadSourceBreakdown.other_unknown, 0);
     assert.equal(fullRange.newRecurringCustomers, 1);
-    assert.equal(fullRange.newRecurringCustomerSourceBreakdown.other_unknown, 1);
+    assert.equal(fullRange.newRecurringCustomerSourceBreakdown.website_organic, 1);
+    assert.equal(fullRange.newRecurringCustomerSourceBreakdown.other_unknown, 0);
     assert.equal(fullRange.priorPeriodLeadConversions, 0);
-    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.other_unknown.leads, 1);
-    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.other_unknown.conversions, 1);
-    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.other_unknown.closeRate, 100);
+    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.website_organic.leads, 1);
+    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.website_organic.conversions, 1);
+    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.website_organic.closeRate, 100);
     assert.equal(fullRange.closeRateMetrics.totalCloseRate, 100);
+  });
+
+  it("keeps Other/Unknown below Facebook, Referral, and Truck Wrap evidence for the same identity", async () => {
+    class StrongPriorSourceLaterUnknownSignupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [
+              strongPriorSourceCustomer("facebook-prior@example.invalid", [{ source: "facebook" }]),
+              strongPriorSourceCustomer("referral-prior@example.invalid", [{ metadata: { how_heard_about_us: "Referral" } }]),
+              strongPriorSourceCustomer("truck-prior@example.invalid", [{ metadata: { how_heard_about_us: "Saw truck wrap" } }])
+            ]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new StrongPriorSourceLaterUnknownSignupPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-26", end: "2026-08-26" }));
+
+    assert.equal(summary.newRecurringCustomers, 3);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.facebook, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.referral, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.other_unknown, 0);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.facebook.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.referral.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.other_unknown.conversions, 0);
   });
 
   it("lets official Social Media signup evidence move a weak Website Organic lead to Facebook for the same identity", async () => {

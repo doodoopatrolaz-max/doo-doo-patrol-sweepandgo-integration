@@ -616,7 +616,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                   )
                 ) FILTER (WHERE cs.id IS NOT NULL),
                 '[]'::jsonb
-              ) AS source_evidence
+              ) AS source_evidence,
+              ${matchedLeadSourceEvidenceSelect("c", "ct")}
        FROM customers c
        LEFT JOIN contacts ct ON ct.id = c.contact_id
        LEFT JOIN customer_sources cs ON cs.customer_id = c.id
@@ -630,6 +631,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       source_raw: row.source_raw,
       metadata: row.metadata,
       source_evidence: row.source_evidence,
+      matched_lead_source_evidence: row.matched_lead_source_evidence,
       dashboard_contact_id: row.dashboard_contact_id,
       dashboard_sweepgo_customer_id: row.dashboard_sweepgo_customer_id,
       dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
@@ -993,7 +995,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
                     )
                   ) FILTER (WHERE cs.id IS NOT NULL),
                   '[]'::jsonb
-                ) AS source_evidence
+                ) AS source_evidence,
+                ${matchedLeadSourceEvidenceSelect("c", "ct")}
          FROM customers c
          LEFT JOIN contacts ct ON ct.id = c.contact_id
          LEFT JOIN customer_sources cs ON cs.customer_id = c.id
@@ -1073,6 +1076,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       source_raw: row.source_raw,
       metadata: row.metadata,
       source_evidence: row.source_evidence,
+      matched_lead_source_evidence: row.matched_lead_source_evidence,
       dashboard_contact_id: row.dashboard_contact_id,
       dashboard_sweepgo_customer_id: row.dashboard_sweepgo_customer_id,
       dashboard_ghl_contact_id: row.dashboard_ghl_contact_id,
@@ -1306,6 +1310,37 @@ function leadReportingDateSql(column: string): string {
 
 function matchedCustomerSourceEvidenceSelect(): string {
   return "COALESCE(matched_customer_sources.source_evidence, '[]'::jsonb) AS matched_customer_source_evidence";
+}
+
+function matchedLeadSourceEvidenceSelect(customerAlias: string, customerContactAlias: string): string {
+  return `COALESCE(
+                (
+                  SELECT jsonb_agg(
+                           jsonb_build_object(
+                             'original' || '_lead_source', matched_leads.matched_original_lead_source,
+                             'source', matched_leads.matched_source,
+                             'metadata', matched_leads.metadata,
+                             'pipeline' || '_name', matched_leads.matched_pipeline,
+                             'stage' || '_name', matched_leads.matched_stage
+                           )
+                         )
+                  FROM (
+                    SELECT DISTINCT o.id,
+                                    o.original_lead_source AS matched_original_lead_source,
+                                    o.source AS matched_source,
+                                    o.metadata,
+                                    o.pipeline_name AS matched_pipeline,
+                                    o.stage_name AS matched_stage
+                    FROM public.opportunities o
+                    LEFT JOIN contacts oct ON oct.id = o.contact_id
+                    WHERE ${reportingLeadExclusionSql("o")}
+                      AND o.original_lead_date IS NOT NULL
+                      AND ${recentOpportunityLeadForSignupSql("o", customerAlias)}
+                      AND ${safeCustomerOpportunityIdentityMatchSql(customerAlias, customerContactAlias, "o", "oct")}
+                  ) matched_leads
+                ),
+                '[]'::jsonb
+              ) AS matched_lead_source_evidence`;
 }
 
 function matchedCustomerSourceEvidenceJoin(opportunityAlias: string): string {
@@ -1601,53 +1636,7 @@ function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): D
 }
 
 function reportingSourceBucket(row: Record<string, unknown>): DashboardSourceBucket {
-  const classifiedBucket = classifyDashboardSource(row).bucket;
-  const officialSignupBucket = officialSignupSourceBucket(row);
-  if (classifiedBucket === "website_organic" && officialSignupBucket === "other_unknown") {
-    return officialSignupBucket;
-  }
-  return classifiedBucket;
-}
-
-function officialSignupSourceBucket(row: Record<string, unknown>): DashboardSourceBucket | undefined {
-  const officialEvidence = collectOfficialSignupSourceEvidence(row);
-  let selected: DashboardSourceBucket | undefined;
-  for (const evidence of officialEvidence) {
-    const bucket = classifyDashboardSource(evidence).bucket;
-    selected = selected ? higherPriorityDashboardSourceBucket(selected, bucket) : bucket;
-  }
-  return selected;
-}
-
-function collectOfficialSignupSourceEvidence(value: unknown, output: Record<string, unknown>[] = []): Record<string, unknown>[] {
-  const record = asRecord(value);
-  if (record) {
-    const provider = (
-      stringValue(record.source_provider)
-      ?? stringValue(record.sourceProvider)
-      ?? stringValue(record.provider)
-    )?.toLowerCase();
-    const fromOfficialSignupSource = provider === "sweepandgo_new_client_email";
-    const hasHowHeardSource = Boolean(findFirstNestedString(record, [
-      "how_heard_answer",
-      "how_heard_about_us",
-      "how_you_heard_about_us"
-    ]));
-    if (fromOfficialSignupSource && hasHowHeardSource) {
-      output.push(record);
-    }
-    for (const entry of Object.values(record)) {
-      collectOfficialSignupSourceEvidence(entry, output);
-    }
-    return output;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectOfficialSignupSourceEvidence(item, output);
-    }
-  }
-  return output;
+  return classifyDashboardSource(row).bucket;
 }
 
 function sourceMetricIdentityKeys(row: Record<string, unknown>): string[] {

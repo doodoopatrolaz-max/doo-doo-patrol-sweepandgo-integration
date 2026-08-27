@@ -138,6 +138,22 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.referralProof, true);
   });
 
+  it("maps owner-approved client relationship source evidence to Referral", () => {
+    for (const source of ["Previous Client", "Past Client", "Former Client", "Returning Client", "Existing Client"]) {
+      const result = classifyDashboardSource({ how_heard_about_us: source });
+
+      assert.equal(result.bucket, "referral");
+      assert.equal(result.referralProof, true);
+    }
+  });
+
+  it("does not map client wording alone to Referral", () => {
+    const result = classifyDashboardSource({ internal_comment: "Client asked about schedule." });
+
+    assert.equal(result.bucket, "other_unknown");
+    assert.equal(result.referralProof, false);
+  });
+
   it("does not map unrelated comment text containing friend to Referral", () => {
     const result = classifyDashboardSource({ internal_comment: "A friend helped fill this out." });
 

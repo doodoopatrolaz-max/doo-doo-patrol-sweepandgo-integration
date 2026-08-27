@@ -61,9 +61,9 @@ const REFERRAL_SOURCE_FIELD_NAMES = new Set([
   "tracking_field"
 ]);
 const REFERRAL_SOURCE_PROOF_PATTERN =
-  /\b(referral|referred|referred by|family or friend|family\/friend|family friend|personal referral|word of mouth|word-of-mouth|neighbor|friend|family)\b/;
+  /\b(referral|referred|referred by|family or friend|family\/friend|family friend|personal referral|word of mouth|word-of-mouth|neighbor|friend|family|previous client|past client|former client|returning client|existing client)\b/;
 const REFERRAL_DETAIL_PROOF_PATTERN =
-  /\b(referral|referred|referred by|family or friend|family\/friend|family friend|personal referral|word of mouth|word-of-mouth)\b/;
+  /\b(referral|referred|referred by|family or friend|family\/friend|family friend|personal referral|word of mouth|word-of-mouth|previous client|past client|former client|returning client|existing client)\b/;
 
 export function emptyDetailedSourceBreakdown(): DashboardDetailedSourceBreakdown {
   return {

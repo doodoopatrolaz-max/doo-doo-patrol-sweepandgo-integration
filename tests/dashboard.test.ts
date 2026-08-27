@@ -1572,6 +1572,151 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(fullRange.closeRateMetrics.totalCloseRate, 100);
   });
 
+  it("lets official Previous Client signup evidence move a weak Website Organic lead to Referral for the same identity", async () => {
+    const officialPreviousClientEvidence = [{
+      source: "other",
+      source_raw: "Previous Client",
+      source_provider: "sweepandgo_new_client_email",
+      evidence: {
+        clean_up_frequency: "Once A Week",
+        how_heard_about_us: "Previous Client"
+      }
+    }];
+
+    class ExistingOrganicLeadLaterPreviousClientSignupPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        const rangeStart = String(params[0] ?? "");
+        const rangeEnd = String(params[1] ?? "");
+        if (sql.includes("matched_future_conversion_source_rows")) {
+          if (rangeStart === "2026-08-02" && rangeEnd === "2026-08-02") {
+            return {
+              rows: [{
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead",
+                dashboard_email: "existing-previous-client-lead@example.invalid",
+                matched_customer_source_evidence: [{
+                  source: "unknown",
+                  source_raw: "unknown",
+                  source_evidence: officialPreviousClientEvidence
+                }]
+              }]
+            };
+          }
+          return { rows: [] };
+        }
+        if (sql.includes("direct_signup_reporting_leads")) {
+          assert(sql.includes("NOT EXISTS"));
+          assert(sql.includes("lead_customer_matches"));
+          return { rows: [] };
+        }
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          if (rangeStart === "2026-08-02") {
+            return {
+              rows: [{
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead",
+                dashboard_email: "existing-previous-client-lead@example.invalid",
+                matched_customer_source_evidence: [{
+                  source: "unknown",
+                  source_raw: "unknown",
+                  source_evidence: officialPreviousClientEvidence
+                }]
+              }]
+            };
+          }
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          if (
+            rangeStart === "2026-08-09"
+            || (rangeStart === "2026-08-02" && rangeEnd === "2026-08-09")
+          ) {
+            const customerRow = {
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: null,
+              dashboard_email: "existing-previous-client-lead@example.invalid",
+              prior_period_lead_conversion: sql.includes("AS prior_period_lead_conversion") && rangeStart === "2026-08-09",
+              source_evidence: officialPreviousClientEvidence,
+              matched_lead_source_evidence: [{
+                original_lead_source: "website",
+                source: "website",
+                metadata: { workflowLeadSource: "website" },
+                pipeline_name: "New Lead to Onboarding",
+                stage_name: "Website Quote Lead"
+              }]
+            };
+            if (sql.includes("AND NOT EXISTS")) {
+              return rangeStart === "2026-08-09"
+                ? { rows: [] }
+                : { rows: [customerRow] };
+            }
+            return { rows: [customerRow] };
+          }
+          return { rows: [] };
+        }
+        if (sql.includes("COUNT(*) FILTER") && sql.includes("FROM lead_customer_matches")) {
+          if (rangeStart === "2026-08-09") {
+            return {
+              rows: [{
+                manual_review: 0,
+                facebook_prior_period: 0,
+                website_prior_period: 0,
+                total_prior_period: 1
+              }]
+            };
+          }
+          return {
+            rows: [{
+              manual_review: 0,
+              facebook_prior_period: 0,
+              website_prior_period: 0,
+              total_prior_period: 0
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const service = new PostgresDashboardDataSource(new ExistingOrganicLeadLaterPreviousClientSignupPool());
+    const originalLeadDay = await service.getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-02", end: "2026-08-02" }));
+    const signupDay = await service.getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-09", end: "2026-08-09" }));
+    const fullRange = await service.getSummary(parseDashboardDateRange({ range: "custom", start: "2026-08-02", end: "2026-08-09" }));
+
+    assert.equal(originalLeadDay.totalLeads, 1);
+    assert.equal(originalLeadDay.leadSourceBreakdown.referral, 1);
+    assert.equal(originalLeadDay.leadSourceBreakdown.website_organic, 0);
+    assert.equal(originalLeadDay.newRecurringCustomers, 0);
+
+    assert.equal(signupDay.totalLeads, 0);
+    assert.equal(signupDay.newRecurringCustomers, 1);
+    assert.equal(signupDay.newRecurringCustomerSourceBreakdown.referral, 0);
+    assert.equal(signupDay.priorPeriodLeadConversions, 1);
+    assert.equal(signupDay.closeRateMetrics.directSignupReportingLeads, 0);
+
+    assert.equal(fullRange.totalLeads, 1);
+    assert.equal(fullRange.leadSourceBreakdown.referral, 1);
+    assert.equal(fullRange.leadSourceBreakdown.website_organic, 0);
+    assert.equal(fullRange.leadSourceBreakdown.other_unknown, 0);
+    assert.equal(fullRange.newRecurringCustomers, 1);
+    assert.equal(fullRange.newRecurringCustomerSourceBreakdown.referral, 1);
+    assert.equal(fullRange.newRecurringCustomerSourceBreakdown.other_unknown, 0);
+    assert.equal(fullRange.priorPeriodLeadConversions, 0);
+    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.referral.leads, 1);
+    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.referral.conversions, 1);
+    assert.equal(fullRange.closeRateMetrics.sourceBreakdown.referral.closeRate, 100);
+    assert.equal(fullRange.closeRateMetrics.totalCloseRate, 100);
+  });
+
   it("keeps Other/Unknown below Facebook, Referral, and Truck Wrap evidence for the same identity", async () => {
     class StrongPriorSourceLaterUnknownSignupPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

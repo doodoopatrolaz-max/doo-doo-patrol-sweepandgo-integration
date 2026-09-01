@@ -1,4 +1,4 @@
-import type { NormalizedCustomerSource } from "../reporting/sourceNormalization.ts";
+import { normalizeExplicitCustomerSource, type NormalizedCustomerSource } from "../reporting/sourceNormalization.ts";
 
 export type ExistingSweepAndGoCustomer = {
   id: string;
@@ -50,8 +50,19 @@ export type SweepAndGoReconciliationIssueInput = {
   details: Record<string, unknown>;
 };
 
+export type SameDayOneTimeOnboardingEvidence = {
+  matched: boolean;
+  ambiguous: boolean;
+  matchCount: number;
+  source: NormalizedCustomerSource;
+  sourceRaw?: string;
+  sourceEvidenceField?: string;
+  sourceDetail?: string;
+};
+
 export interface SweepAndGoWebhookBiStore {
   findCustomer(externalCustomerId: string): Promise<ExistingSweepAndGoCustomer | undefined>;
+  findSameDayOneTimeOnboarding?(externalCustomerId: string, eventDate: string): Promise<SameDayOneTimeOnboardingEvidence>;
   upsertCustomer(input: SweepAndGoCustomerUpsertInput): Promise<ExistingSweepAndGoCustomer>;
   upsertService(input: SweepAndGoServiceUpsertInput): Promise<void>;
   upsertCancellation(input: SweepAndGoCancellationInput): Promise<void>;
@@ -75,6 +86,74 @@ export class PostgresSweepAndGoWebhookBiStore implements SweepAndGoWebhookBiStor
     );
 
     return result.rows[0] ? mapCustomer(result.rows[0]) : undefined;
+  }
+
+  async findSameDayOneTimeOnboarding(externalCustomerId: string, eventDate: string): Promise<SameDayOneTimeOnboardingEvidence> {
+    const result = await this.pool.query(
+      `SELECT oi.client_identifier,
+              oi.payload,
+              oi.verified_details,
+              oi.sweepandgo_details,
+              we.payload AS webhook_payload
+       FROM onboarding_intakes oi
+       LEFT JOIN webhook_events we ON we.id = oi.webhook_event_id
+       WHERE (COALESCE(we.received_at, oi.created_at) AT TIME ZONE 'America/Phoenix')::date = $1::date
+         AND (
+           oi.event_type = 'client:client_onboarding_onetime'
+           OR oi.service_type ILIKE '%one%time%'
+           OR oi.service_type ILIKE '%one_time%'
+         )`,
+      [eventDate]
+    );
+
+    const matches = result.rows.filter((row: Record<string, unknown>) => {
+      const identifiers = new Set<string>();
+      addString(identifiers, row.client_identifier);
+      collectClientIdentifiers(row.payload, identifiers);
+      collectClientIdentifiers(row.verified_details, identifiers);
+      collectClientIdentifiers(row.sweepandgo_details, identifiers);
+      collectClientIdentifiers(row.webhook_payload, identifiers);
+      return identifiers.has(externalCustomerId);
+    });
+
+    if (matches.length === 0) {
+      return {
+        matched: false,
+        ambiguous: false,
+        matchCount: 0,
+        source: "unknown"
+      };
+    }
+
+    const sources = matches
+      .map((row: Record<string, unknown>) => sourceFromOneTimeOnboarding(row))
+      .filter((source: SameDayOneTimeOnboardingEvidence) => source.source !== "unknown" || Boolean(source.sourceRaw));
+    const sourceKeys = new Set(sources.map((source: SameDayOneTimeOnboardingEvidence) => [
+      source.source,
+      source.sourceRaw ?? "",
+      source.sourceEvidenceField ?? "",
+      source.sourceDetail ?? ""
+    ].join("|")));
+
+    if (sourceKeys.size > 1) {
+      return {
+        matched: true,
+        ambiguous: true,
+        matchCount: matches.length,
+        source: "unknown"
+      };
+    }
+
+    const source = sources[0];
+    return {
+      matched: true,
+      ambiguous: false,
+      matchCount: matches.length,
+      source: source?.source ?? "unknown",
+      sourceRaw: source?.sourceRaw,
+      sourceEvidenceField: source?.sourceEvidenceField,
+      sourceDetail: source?.sourceDetail
+    };
   }
 
   async upsertCustomer(input: SweepAndGoCustomerUpsertInput): Promise<ExistingSweepAndGoCustomer> {
@@ -346,4 +425,77 @@ function mapCustomer(row: Record<string, unknown>): ExistingSweepAndGoCustomer {
 
 function normalizeStoredSource(value: unknown): NormalizedCustomerSource {
   return value === "facebook" || value === "website" || value === "other" ? value : "unknown";
+}
+
+function sourceFromOneTimeOnboarding(row: Record<string, unknown>): SameDayOneTimeOnboardingEvidence {
+  for (const value of [row.payload, row.webhook_payload, row.verified_details, row.sweepandgo_details]) {
+    const source = normalizeExplicitCustomerSource(asRecordWithData(value));
+    if (source.normalizedSource !== "unknown" || source.rawSource) {
+      return {
+        matched: true,
+        ambiguous: false,
+        matchCount: 1,
+        source: source.normalizedSource,
+        sourceRaw: source.rawSource,
+        sourceEvidenceField: source.evidenceField,
+        sourceDetail: firstNestedString(value, [
+          "how_heard_about_us_details",
+          "how_heard_details",
+          "how_you_heard_about_us_details",
+          "source_detail",
+          "sourceDetail",
+          "source_details"
+        ])
+      };
+    }
+  }
+
+  return {
+    matched: true,
+    ambiguous: false,
+    matchCount: 1,
+    source: "unknown"
+  };
+}
+
+function asRecordWithData(value: unknown): Record<string, unknown> {
+  const root = asRecord(value);
+  const data = asRecord(root.data);
+  return Object.keys(data).length > 0 ? data : root;
+}
+
+function collectClientIdentifiers(value: unknown, output: Set<string>): void {
+  const record = asRecordWithData(value);
+  for (const key of ["client", "customer", "client_id", "customer_id", "client_identifier"]) {
+    addString(output, record[key]);
+  }
+}
+
+function addString(output: Set<string>, value: unknown): void {
+  if (typeof value === "string" && value.trim()) {
+    output.add(value.trim());
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    output.add(String(value));
+  }
+}
+
+function firstNestedString(value: unknown, keys: string[]): string | undefined {
+  const record = asRecordWithData(value);
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return String(candidate);
+    }
+  }
+  return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }

@@ -47,6 +47,9 @@ class FakePool {
     if (sql.includes("direct_signup_reporting_leads")) {
       return { rows: [] };
     }
+    if (sql.includes("recurring_customer_same_day_identity_keys")) {
+      return { rows: [] };
+    }
     if (sql.includes("one_time_cleanup_reporting_rows")) {
       return { rows: [] };
     }
@@ -897,6 +900,84 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.cancellations, baseline.cancellations);
     assert.equal(summary.revenuePerHourMetrics.serviceRevenue, baseline.revenuePerHourMetrics.serviceRevenue);
     assert.equal(summary.revenuePerShiftHourMetrics.serviceRevenue, baseline.revenuePerShiftHourMetrics.serviceRevenue);
+  });
+
+  it("counts a same-day one-time intake plus recurring signup as recurring instead of one-time", async () => {
+    class OneTimeConvertedToRecurringPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("recurring_customer_same_day_identity_keys")) {
+          return {
+            rows: [{
+              recurring_date: "2026-07-24",
+              external_sweepgo_id: "client-converted",
+              primary_email: "converted-cleanup@example.invalid",
+              primary_phone: "5550102000"
+            }]
+          };
+        }
+        if (sql.includes("one_time_cleanup_reporting_rows")) {
+          return {
+            rows: [
+              oneTimeCleanupIntakeRow({
+                date: "2026-07-24",
+                fingerprint: "converted-one-time",
+                source: "Vehicle Signage",
+                clientIdentifier: "client-converted",
+                email: "converted-cleanup@example.invalid"
+              })
+            ]
+          };
+        }
+        if (sql.includes("direct_signup_reporting_leads")) {
+          return {
+            rows: [{
+              direct_signup_lead_date: "2026-07-24",
+              source: "other",
+              source_raw: "Vehicle Signage",
+              metadata: {},
+              dashboard_sweepgo_customer_id: "client-converted",
+              dashboard_email: "converted-cleanup@example.invalid",
+              dashboard_phone: "5550102000",
+              source_evidence: [{ source: "other", source_raw: "Vehicle Signage", evidence: { how_heard_about_us: "Vehicle Signage" } }]
+            }]
+          };
+        }
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "other",
+              source_raw: "Vehicle Signage",
+              metadata: {},
+              monthly_recurring_revenue: null,
+              dashboard_sweepgo_customer_id: "client-converted",
+              dashboard_email: "converted-cleanup@example.invalid",
+              dashboard_phone: "5550102000",
+              source_evidence: [{ source: "other", source_raw: "Vehicle Signage", evidence: { how_heard_about_us: "Vehicle Signage" } }],
+              matched_lead_source_evidence: []
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new OneTimeConvertedToRecurringPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-07-24", end: "2026-07-24" }));
+
+    assert.equal(summary.oneTimeCleanups, 0);
+    assert.equal(summary.closeRateMetrics.oneTimeCleanupReportingLeads, 0);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.leadSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.totalCloseRate, 100);
   });
 
   it("maps a Search Engine plus Google new recurring customer to Website Paid without changing unrelated KPIs", async () => {

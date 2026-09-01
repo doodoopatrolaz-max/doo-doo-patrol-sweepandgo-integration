@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { SweepAndGoWebhookBiProcessor } from "../src/sweepandgo/webhookBiProcessor.ts";
 import type {
   ExistingSweepAndGoCustomer,
+  SameDayOneTimeOnboardingEvidence,
   SweepAndGoCancellationInput,
   SweepAndGoCustomerUpsertInput,
   SweepAndGoReconciliationIssueInput,
@@ -17,9 +18,19 @@ class InMemoryBiStore implements SweepAndGoWebhookBiStore {
   cancellations = new Map<string, SweepAndGoCancellationInput>();
   issues = new Map<string, SweepAndGoReconciliationIssueInput>();
   customerInputs = new Map<string, SweepAndGoCustomerUpsertInput>();
+  sameDayOneTimeOnboarding = new Map<string, SameDayOneTimeOnboardingEvidence>();
 
   async findCustomer(externalCustomerId: string) {
     return this.customers.get(externalCustomerId);
+  }
+
+  async findSameDayOneTimeOnboarding(externalCustomerId: string, eventDate: string) {
+    return this.sameDayOneTimeOnboarding.get(`${externalCustomerId}:${eventDate}`) ?? {
+      matched: false,
+      ambiguous: false,
+      matchCount: 0,
+      source: "unknown" as const
+    };
   }
 
   async upsertCustomer(input: SweepAndGoCustomerUpsertInput) {
@@ -242,6 +253,68 @@ describe("Sweep&Go webhook BI processor", () => {
 
     assert.equal(store.issues.size, 1);
     assert.equal([...store.issues.values()][0]?.issueType, "sweepandgo_subscription_created_new_customer_uncertain");
+  });
+
+  it("promotes same-day one-time onboarding plus subscription_created to recurring", async () => {
+    const store = new InMemoryBiStore();
+    store.sameDayOneTimeOnboarding.set("client-converted:2026-06-22", {
+      matched: true,
+      ambiguous: false,
+      matchCount: 2,
+      source: "other",
+      sourceRaw: "Vehicle Signage",
+      sourceEvidenceField: "how_heard_about_us"
+    });
+    const processor = new SweepAndGoWebhookBiProcessor(store);
+
+    await processor.process(webhook({
+      eventType: "client:subscription_created",
+      payload: {
+        data: {
+          client: "client-converted",
+          subscription_id: "sub-weekly",
+          subscription_name: "Weekly cleanup"
+        }
+      }
+    }));
+
+    const customer = store.customers.get("client-converted");
+    const input = store.customerInputs.get("client-converted");
+    assert.equal(customer?.status, "active");
+    assert.equal(customer?.source, "other");
+    assert.equal(customer?.firstRecurringDate, "2026-06-22");
+    assert.equal(input?.sourceRaw, "Vehicle Signage");
+    assert.equal(input?.metadata.firstRecurringDateEvidence, "same_day_one_time_subscription_created");
+    assert.equal(input?.metadata.sameDayOneTimeConvertedToRecurring, true);
+    assert.equal(store.services.size, 1);
+    assert.equal(store.issues.size, 0);
+  });
+
+  it("routes ambiguous same-day one-time to recurring evidence to review", async () => {
+    const store = new InMemoryBiStore();
+    store.sameDayOneTimeOnboarding.set("client-ambiguous:2026-06-22", {
+      matched: true,
+      ambiguous: true,
+      matchCount: 2,
+      source: "unknown"
+    });
+    const processor = new SweepAndGoWebhookBiProcessor(store);
+
+    await processor.process(webhook({
+      eventType: "client:subscription_created",
+      payload: {
+        data: {
+          client: "client-ambiguous",
+          subscription_id: "sub-weekly"
+        }
+      }
+    }));
+
+    const customer = store.customers.get("client-ambiguous");
+    assert.equal(customer?.firstRecurringDate, undefined);
+    assert.equal(store.issues.size, 2);
+    assert([...store.issues.values()].some((issue) => issue.issueType === "sweepandgo_same_day_onetime_to_recurring_source_ambiguous"));
+    assert([...store.issues.values()].some((issue) => issue.issueType === "sweepandgo_subscription_created_new_customer_uncertain"));
   });
 
   it("creates cancellation only when subscription identity is reliable", async () => {

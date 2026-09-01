@@ -86,9 +86,38 @@ export class SweepAndGoWebhookBiProcessor implements WebhookProcessor {
     }
 
     if (parsed.eventType === "client:subscription_created") {
-      const customer = await this.upsertCustomerWithoutNewRecurringDate(parsed, event, "active");
+      const sameDayOneTimeOnboarding = await this.store.findSameDayOneTimeOnboarding?.(parsed.externalCustomerId, parsed.eventDate);
+      if (sameDayOneTimeOnboarding?.ambiguous) {
+        await this.store.createReconciliationIssue({
+          issueType: "sweepandgo_same_day_onetime_to_recurring_source_ambiguous",
+          summary: "Sweep&Go same-day one-time to recurring conversion had conflicting source evidence",
+          details: safeIssueDetails(parsed, event, {
+            sameDayOneTimeMatches: sameDayOneTimeOnboarding.matchCount
+          })
+        });
+      }
+
+      const shouldPromoteSameDayOneTimeConversion = Boolean(sameDayOneTimeOnboarding?.matched && !sameDayOneTimeOnboarding.ambiguous);
+      const customer = shouldPromoteSameDayOneTimeConversion
+        ? await this.store.upsertCustomer({
+            externalCustomerId: parsed.externalCustomerId!,
+            status: "active",
+            source: sameDayOneTimeOnboarding?.source ?? parsed.source,
+            sourceRaw: sameDayOneTimeOnboarding?.sourceRaw ?? parsed.sourceRaw,
+            firstRecurringDate: parsed.eventDate,
+            ...contactInput(parsed),
+            metadata: eventMetadata(parsed, event, {
+              firstRecurringDateEvidence: "same_day_one_time_subscription_created",
+              sameDayOneTimeConvertedToRecurring: true,
+              sameDayOneTimeMatches: sameDayOneTimeOnboarding?.matchCount,
+              sourceEvidenceField: sameDayOneTimeOnboarding?.sourceEvidenceField ?? parsed.sourceEvidenceField,
+              sourceDetail: sameDayOneTimeOnboarding?.sourceDetail ?? parsed.sourceDetail,
+              mrrDeferred: true
+            })
+          })
+        : await this.upsertCustomerWithoutNewRecurringDate(parsed, event, "active");
       await this.upsertSubscriptionService(customer, parsed, event, undefined);
-      if (!customer.firstRecurringDate) {
+      if (!customer.firstRecurringDate && !shouldPromoteSameDayOneTimeConversion) {
         await this.store.createReconciliationIssue({
           issueType: "sweepandgo_subscription_created_new_customer_uncertain",
           summary: "Sweep&Go subscription_created webhook may be a new recurring customer or a service change",

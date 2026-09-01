@@ -1220,6 +1220,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
 
   private async oneTimeCleanupSignupRows(range: DashboardDateRange): Promise<OneTimeCleanupSignup[]> {
     const hasEmailSourceEvidenceTable = await this.hasEmailSourceEvidenceTable();
+    const recurringCustomerIdentityKeys = await this.recurringCustomerSameDayIdentityKeys(range);
     const emailSourceEvidenceSelect = hasEmailSourceEvidenceTable
       ? "COALESCE(email_sources.source_evidence, '[]'::jsonb) AS email_source_evidence"
       : "'[]'::jsonb AS email_source_evidence";
@@ -1274,6 +1275,10 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       if (!cleanupDate) {
         continue;
       }
+      const identityKeys = oneTimeCleanupIdentityKeys(row);
+      if (identityKeys.some((key) => recurringCustomerIdentityKeys.has(`${cleanupDate}|${key}`))) {
+        continue;
+      }
       const dedupeKey = oneTimeCleanupDedupeKey(row, cleanupDate);
       const sourceInput = oneTimeCleanupSourceInput(row);
       const source = classifyDashboardSource(sourceInput).bucket;
@@ -1296,6 +1301,40 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     }
 
     return [...grouped.values()];
+  }
+
+  private async recurringCustomerSameDayIdentityKeys(range: DashboardDateRange): Promise<Set<string>> {
+    const result = await this.pool.query(
+      `SELECT /* recurring_customer_same_day_identity_keys */
+              c.first_recurring_date::text AS recurring_date,
+              c.external_sweepgo_id,
+              ct.primary_email,
+              ct.primary_phone
+       FROM customers c
+       LEFT JOIN contacts ct ON ct.id = c.contact_id
+       WHERE c.first_recurring_date BETWEEN $1::date AND $2::date`,
+      [range.startDate, range.endDate]
+    );
+    const keys = new Set<string>();
+    for (const row of result.rows) {
+      const recurringDate = stringValue(row.recurring_date);
+      if (!recurringDate) {
+        continue;
+      }
+      const externalSweepGoId = stringValue(row.external_sweepgo_id);
+      if (externalSweepGoId) {
+        keys.add(`${recurringDate}|client:${normalizeKeyPart(externalSweepGoId)}`);
+      }
+      const email = normalizeEmail(stringValue(row.primary_email));
+      if (email) {
+        keys.add(`${recurringDate}|email:${email}`);
+      }
+      const phone = normalizePhone(stringValue(row.primary_phone));
+      if (phone) {
+        keys.add(`${recurringDate}|phone:${phone}`);
+      }
+    }
+    return keys;
   }
 
   private async hasEmailSourceEvidenceTable(): Promise<boolean> {

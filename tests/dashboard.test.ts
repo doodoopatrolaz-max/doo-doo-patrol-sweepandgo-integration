@@ -1492,7 +1492,7 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(signupDay.totalLeads, 0);
     assert.equal(signupDay.newRecurringCustomers, 1);
-    assert.equal(signupDay.newRecurringCustomerSourceBreakdown.website_paid, 0);
+    assert.equal(signupDay.newRecurringCustomerSourceBreakdown.website_paid, 1);
     assert.equal(signupDay.priorPeriodLeadConversions, 1);
     assert.equal(signupDay.closeRateMetrics.directSignupReportingLeads, 0);
     assert.equal(signupDay.closeRateMetrics.websiteMatchedConversions, 0);
@@ -1780,7 +1780,7 @@ describe("dashboard KPI aggregation", () => {
 
     assert.equal(signupDay.totalLeads, 0);
     assert.equal(signupDay.newRecurringCustomers, 1);
-    assert.equal(signupDay.newRecurringCustomerSourceBreakdown.referral, 0);
+    assert.equal(signupDay.newRecurringCustomerSourceBreakdown.referral, 1);
     assert.equal(signupDay.priorPeriodLeadConversions, 1);
     assert.equal(signupDay.closeRateMetrics.directSignupReportingLeads, 0);
 

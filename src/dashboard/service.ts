@@ -625,8 +625,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
        GROUP BY c.id, ct.external_ghl_id, ct.primary_email, ct.primary_phone`,
       [range.startDate, range.endDate]
     );
-    const selectedPeriodSourceRows = result.rows.filter((row) => !Boolean(row.prior_period_lead_conversion));
-    const sourceMetrics = rowsToSourceMetrics(selectedPeriodSourceRows.map((row) => ({
+    const sourceMetrics = rowsToSourceMetrics(result.rows.map((row) => ({
       source: row.source,
       source_raw: row.source_raw,
       metadata: row.metadata,

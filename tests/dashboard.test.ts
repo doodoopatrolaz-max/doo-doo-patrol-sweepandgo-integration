@@ -617,6 +617,39 @@ describe("dashboard KPI aggregation", () => {
     assert(leadQueries.every((query) => !query.sql.includes("ILIKE")));
   });
 
+  it("excludes subscription cancellations from churn review when open recurring service evidence remains", async () => {
+    class SubscriptionModificationPool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM cancellations")) {
+          assert(sql.includes("has_open_recurring_service"));
+          assert(sql.includes("has_subscription_cancel_signal"));
+          assert(sql.includes("customer_services cs"));
+          return {
+            rows: [{
+              counted_cancellations: 0,
+              raw_cancellation_rows: 1,
+              unique_cancellation_candidates: 1,
+              duplicate_rows_excluded: 0,
+              subscription_only_active_excluded: 1,
+              pause_rows_excluded: 0,
+              needs_review: 0
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new SubscriptionModificationPool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-09-02", end: "2026-09-02" }));
+
+    assert.equal(summary.cancellations, 0);
+    assert.equal(summary.cancellationMetrics.needsReview, 0);
+    assert.equal(summary.cancellationMetrics.subscriptionOnlyActiveExcluded, 1);
+    assert.equal(summary.churnRate, 0);
+  });
+
   it("counts one-time cleanups separately without changing recurring KPIs", async () => {
     class OneTimeCleanupPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

@@ -747,7 +747,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          SELECT
            COALESCE(cn.customer_id::text, cn.external_sweepgo_id, cn.id::text) AS cancellation_key,
            COALESCE(c.status, 'missing') AS customer_status,
-           COALESCE(cn.metadata->>'eventType', cn.metadata->>'event_type', '') AS event_type
+           COALESCE(cn.metadata->>'eventType', cn.metadata->>'event_type', '') AS event_type,
+           EXISTS (
+             SELECT 1
+             FROM customer_services cs
+             WHERE cs.customer_id = c.id
+               AND cs.cadence = 'recurring'
+               AND cs.ended_on IS NULL
+           ) AS has_open_recurring_service
          FROM cancellations cn
          LEFT JOIN customers c ON c.id = cn.customer_id
          WHERE cn.cancelled_on BETWEEN $1::date AND $2::date
@@ -757,7 +764,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
            cancellation_key,
            MAX(customer_status) AS customer_status,
            COUNT(*)::int AS row_count,
-           BOOL_OR(event_type ILIKE '%pause%') AS has_pause_signal
+           BOOL_OR(event_type ILIKE '%pause%') AS has_pause_signal,
+           BOOL_OR(event_type ILIKE '%subscription_cancel%') AS has_subscription_cancel_signal,
+           BOOL_OR(has_open_recurring_service) AS has_open_recurring_service
          FROM cancellation_rows
          GROUP BY cancellation_key
        )
@@ -766,9 +775,22 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          COALESCE(SUM(row_count), 0)::int AS raw_cancellation_rows,
          COUNT(*)::int AS unique_cancellation_candidates,
          COALESCE(SUM(row_count - 1), 0)::int AS duplicate_rows_excluded,
-         COUNT(*) FILTER (WHERE customer_status = 'active')::int AS subscription_only_active_excluded,
+         COUNT(*) FILTER (
+           WHERE customer_status = 'active'
+              OR (
+                customer_status <> 'inactive'
+                AND has_subscription_cancel_signal
+                AND has_open_recurring_service
+              )
+         )::int AS subscription_only_active_excluded,
          COUNT(*) FILTER (WHERE has_pause_signal AND customer_status <> 'inactive')::int AS pause_rows_excluded,
-         COUNT(*) FILTER (WHERE customer_status NOT IN ('active', 'inactive'))::int AS needs_review
+         COUNT(*) FILTER (
+           WHERE customer_status NOT IN ('active', 'inactive')
+             AND NOT (
+               has_subscription_cancel_signal
+               AND has_open_recurring_service
+             )
+         )::int AS needs_review
        FROM grouped`,
       [range.startDate, range.endDate]
     );

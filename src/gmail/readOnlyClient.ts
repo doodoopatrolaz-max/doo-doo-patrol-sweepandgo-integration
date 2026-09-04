@@ -16,12 +16,30 @@ export type GmailReadOnlyAvailability = {
   missingVariables: string[];
 };
 
+export type GmailReadOnlyClientOptions = {
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+};
+
 export class GmailReadOnlyClient {
   private readonly config: GmailReadOnlyClientConfig;
+  private readonly fetchImpl: typeof fetch;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly maxAttempts: number;
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
   private accessToken?: { value: string; expiresAt: number };
 
-  constructor(config: GmailReadOnlyClientConfig) {
+  constructor(config: GmailReadOnlyClientConfig, options: GmailReadOnlyClientOptions = {}) {
     this.config = config;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 3));
+    this.baseDelayMs = Math.max(0, Math.floor(options.baseDelayMs ?? 1_000));
+    this.maxDelayMs = Math.max(this.baseDelayMs, Math.floor(options.maxDelayMs ?? 10_000));
   }
 
   getAvailability(): GmailReadOnlyAvailability {
@@ -90,15 +108,25 @@ export class GmailReadOnlyClient {
 
   private async fetchJson(url: URL, errorPrefix: string): Promise<any> {
     const token = await this.getAccessToken();
-    const response = await fetch(url, {
-      headers: {
-        authorization: `Bearer ${token}`
+    return await this.withRetry(errorPrefix, async () => {
+      const response = await this.fetchWithNetworkError(
+        url,
+        {
+          headers: {
+            authorization: `Bearer ${token}`
+          }
+        },
+        errorPrefix
+      );
+      if (!response.ok) {
+        throw new GmailReadOnlyHttpError(
+          `${errorPrefix} with HTTP ${response.status}`,
+          response.status,
+          retryAfterMs(response)
+        );
       }
+      return await response.json();
     });
-    if (!response.ok) {
-      throw new Error(`${errorPrefix} with HTTP ${response.status}`);
-    }
-    return await response.json();
   }
 
   private async getAccessToken(): Promise<string> {
@@ -106,22 +134,33 @@ export class GmailReadOnlyClient {
       return this.accessToken.value;
     }
 
-    const response = await fetch(this.config.gmailOAuthTokenUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({
-        client_id: this.config.gmailClientId ?? "",
-        client_secret: this.config.gmailClientSecret ?? "",
-        refresh_token: this.config.gmailRefreshToken ?? "",
-        grant_type: "refresh_token"
-      })
+    const body = await this.withRetry("Gmail OAuth refresh", async () => {
+      const response = await this.fetchWithNetworkError(
+        this.config.gmailOAuthTokenUrl,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            client_id: this.config.gmailClientId ?? "",
+            client_secret: this.config.gmailClientSecret ?? "",
+            refresh_token: this.config.gmailRefreshToken ?? "",
+            grant_type: "refresh_token"
+          })
+        },
+        "Gmail OAuth refresh"
+      );
+      const parsed = await response.json().catch(() => ({}));
+      if (!response.ok || typeof parsed.access_token !== "string") {
+        throw new GmailReadOnlyHttpError(
+          `Gmail OAuth refresh failed with HTTP ${response.status}`,
+          response.status,
+          retryAfterMs(response)
+        );
+      }
+      return parsed;
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok || typeof body.access_token !== "string") {
-      throw new Error(`Gmail OAuth refresh failed with HTTP ${response.status}`);
-    }
 
     this.accessToken = {
       value: body.access_token,
@@ -129,11 +168,98 @@ export class GmailReadOnlyClient {
     };
     return this.accessToken.value;
   }
+
+  private async fetchWithNetworkError(
+    input: string | URL,
+    init: RequestInit,
+    operation: string
+  ): Promise<Response> {
+    try {
+      return await this.fetchImpl(input, init);
+    } catch (error) {
+      throw new GmailReadOnlyNetworkError(`${operation} network error: ${errorMessage(error)}`);
+    }
+  }
+
+  private async withRetry<T>(operation: string, run: () => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      try {
+        return await run();
+      } catch (error) {
+        lastError = error;
+        if (attempt === this.maxAttempts || !isRetryableGmailReadOnlyError(error)) {
+          throw error;
+        }
+        await this.sleep(this.retryDelayMs(error, attempt));
+      }
+    }
+    throw new Error(`${operation} failed: ${errorMessage(lastError)}`);
+  }
+
+  private retryDelayMs(error: unknown, attempt: number): number {
+    if (error instanceof GmailReadOnlyHttpError && error.retryAfterMs !== undefined) {
+      return Math.min(error.retryAfterMs, this.maxDelayMs);
+    }
+    return Math.min(this.baseDelayMs * attempt, this.maxDelayMs);
+  }
 }
 
 export function createGmailReadOnlyClient(config: GmailReadOnlyClientConfig): GmailReadOnlyClient | undefined {
   const client = new GmailReadOnlyClient(config);
   return client.getAvailability().available ? client : undefined;
+}
+
+class GmailReadOnlyNetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GmailReadOnlyNetworkError";
+  }
+}
+
+class GmailReadOnlyHttpError extends Error {
+  readonly status: number;
+  readonly retryAfterMs?: number;
+
+  constructor(message: string, status: number, retryAfterMs?: number) {
+    super(message);
+    this.name = "GmailReadOnlyHttpError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function isRetryableGmailReadOnlyError(error: unknown): boolean {
+  if (error instanceof GmailReadOnlyNetworkError) {
+    return true;
+  }
+  if (error instanceof GmailReadOnlyHttpError) {
+    return (
+      error.status === 408 ||
+      error.status === 409 ||
+      error.status === 425 ||
+      error.status === 429 ||
+      error.status >= 500
+    );
+  }
+  return false;
+}
+
+function retryAfterMs(response: Response): number | undefined {
+  const value = response.headers.get("retry-after");
+  if (!value) {
+    return undefined;
+  }
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+  const date = new Date(value).getTime();
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function extractHeaders(payload: unknown): Map<string, string> {

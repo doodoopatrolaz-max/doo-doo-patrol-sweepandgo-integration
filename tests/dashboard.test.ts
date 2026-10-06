@@ -2100,6 +2100,52 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.revenuePerShiftHourMetrics.serviceRevenue, baseline.revenuePerShiftHourMetrics.serviceRevenue);
   });
 
+  it("uses Vehicle Signage email evidence when a stale normalized source says Facebook", async () => {
+    class VehicleSignageConflictingSourcePool extends FakePool {
+      override async query(sql: string, params: unknown[] = []) {
+        this.queries.push({ sql, params });
+        if (sql.includes("FROM opportunities") && sql.includes("original_lead_source,") && sql.includes("pipeline_name")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM customers c") && sql.includes("c.first_recurring_date BETWEEN")) {
+          return {
+            rows: [{
+              source: "unknown",
+              source_raw: "unknown",
+              metadata: {},
+              monthly_recurring_revenue: 92,
+              source_evidence: [{
+                source: "facebook",
+                source_raw: "Vehicle Signage",
+                source_provider: "sweepandgo_new_client_email",
+                evidence: {
+                  clean_up_frequency: "Once A Week",
+                  how_heard_about_us: "Vehicle Signage"
+                }
+              }]
+            }]
+          };
+        }
+        return await super.query(sql, params);
+      }
+    }
+
+    const summary = await new PostgresDashboardDataSource(new VehicleSignageConflictingSourcePool())
+      .getSummary(parseDashboardDateRange({ range: "custom", start: "2026-10-05", end: "2026-10-05" }));
+
+    assert.equal(summary.totalLeads, 1);
+    assert.equal(summary.newRecurringCustomers, 1);
+    assert.equal(summary.leadSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.leadSourceBreakdown.facebook, 0);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.truck_wrap, 1);
+    assert.equal(summary.newRecurringCustomerSourceBreakdown.facebook, 0);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.leads, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.conversions, 1);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.truck_wrap.closeRate, 100);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.facebook.leads, 0);
+    assert.equal(summary.closeRateMetrics.sourceBreakdown.facebook.conversions, 0);
+  });
+
   it("uses referral email evidence for direct recurring Referral attribution without changing unrelated KPIs", async () => {
     class ReferralNewRecurringPool extends FakePool {
       override async query(sql: string, params: unknown[] = []) {

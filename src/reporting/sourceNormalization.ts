@@ -6,7 +6,7 @@ export function normalizeCustomerSource(value: unknown): NormalizedCustomerSourc
   }
 
   const normalized = value.toLowerCase();
-  if (normalized.includes("facebook") || normalized.includes("instagram") || normalized.includes("fb") || normalized.includes("ig") || normalized.includes("meta")) {
+  if (/\b(facebook|instagram|fb|ig|meta)\b/.test(normalized)) {
     return "facebook";
   }
 

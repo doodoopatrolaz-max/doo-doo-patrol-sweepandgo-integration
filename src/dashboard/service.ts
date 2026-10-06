@@ -1696,7 +1696,55 @@ function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): D
 }
 
 function reportingSourceBucket(row: Record<string, unknown>): DashboardSourceBucket {
+  const officialSourceEvidenceBucket = reportingOfficialSourceEvidenceBucket(row.source_evidence)
+    ?? reportingOfficialSourceEvidenceBucket(row.matched_customer_source_evidence);
+  if (officialSourceEvidenceBucket && officialSourceEvidenceBucket !== "other_unknown") {
+    return officialSourceEvidenceBucket;
+  }
+
   return classifyDashboardSource(row).bucket;
+}
+
+function reportingOfficialSourceEvidenceBucket(evidence: unknown): DashboardSourceBucket | undefined {
+  const rows = Array.isArray(evidence) ? evidence : [];
+  let bucket: DashboardSourceBucket | undefined;
+  for (const row of rows) {
+    const evidenceBucket = officialSourceEvidenceRowBucket(row);
+    if (!evidenceBucket || evidenceBucket === "other_unknown") {
+      continue;
+    }
+    bucket = bucket
+      ? higherPriorityDashboardSourceBucket(bucket, evidenceBucket)
+      : evidenceBucket;
+  }
+  return bucket;
+}
+
+function officialSourceEvidenceRowBucket(row: unknown): DashboardSourceBucket | undefined {
+  const record = asRecord(row);
+  if (!record) {
+    return undefined;
+  }
+
+  const rawEvidenceBucket = classifyDashboardSource({
+    source_raw: record.source_raw,
+    source_provider: record.source_provider,
+    evidence: record.evidence
+  }).bucket;
+  if (rawEvidenceBucket !== "other_unknown") {
+    return rawEvidenceBucket;
+  }
+
+  const nestedEvidence = asRecord(record.source_evidence);
+  if (nestedEvidence) {
+    return reportingOfficialSourceEvidenceBucket([nestedEvidence]);
+  }
+
+  if (Array.isArray(record.source_evidence)) {
+    return reportingOfficialSourceEvidenceBucket(record.source_evidence);
+  }
+
+  return classifyDashboardSource(record).bucket;
 }
 
 function sourceMetricIdentityKeys(row: Record<string, unknown>): string[] {

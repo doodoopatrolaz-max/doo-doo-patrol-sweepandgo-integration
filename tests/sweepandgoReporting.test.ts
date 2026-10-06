@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeExplicitCustomerSource } from "../src/reporting/sourceNormalization.ts";
+import { normalizeCustomerSource, normalizeExplicitCustomerSource } from "../src/reporting/sourceNormalization.ts";
 import {
   calculateMonthlyRecurringRevenue,
   extractSweepAndGoRows,
@@ -108,6 +108,8 @@ describe("Sweep&Go reporting mapper", () => {
   });
 
   it("normalizes only explicit source fields", () => {
+    assert.equal(normalizeCustomerSource("Vehicle Signage"), "other");
+
     assert.deepEqual(normalizeExplicitCustomerSource({
       email: "facebook-person@example.com",
       first_name: "Facebook"

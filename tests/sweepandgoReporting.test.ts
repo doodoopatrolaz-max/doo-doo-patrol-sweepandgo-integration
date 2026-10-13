@@ -109,6 +109,7 @@ describe("Sweep&Go reporting mapper", () => {
 
   it("normalizes only explicit source fields", () => {
     assert.equal(normalizeCustomerSource("Vehicle Signage"), "other");
+    assert.equal(normalizeCustomerSource("Other / Google"), "website");
 
     assert.deepEqual(normalizeExplicitCustomerSource({
       email: "facebook-person@example.com",

@@ -35,6 +35,16 @@ describe("dashboard source attribution classifier", () => {
     assert.equal(result.paidProof, false);
   });
 
+  it("maps official Other plus Google source details to Website Paid", () => {
+    const result = classifyDashboardSource({
+      how_heard_about_us: "Other",
+      how_heard_about_us_details: "Google"
+    });
+
+    assert.equal(result.bucket, "website_paid");
+    assert.equal(result.paidProof, true);
+  });
+
   it("maps Search Engine alone to Website Paid by owner-approved dashboard rule", () => {
     const result = classifyDashboardSource({ how_heard_answer: "Search Engine" });
 

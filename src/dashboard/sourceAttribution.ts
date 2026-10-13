@@ -205,6 +205,10 @@ function hasExplicitNonFacebookSocialMediaProof(flattened: EvidenceEntry[]): boo
 }
 
 function hasPaidProof(flattened: EvidenceEntry[]): boolean {
+  if (hasGoogleSourceDetailProof(flattened)) {
+    return true;
+  }
+
   for (const entry of flattened) {
     const path = entry.path.toLowerCase();
     const value = entry.value.trim().toLowerCase();
@@ -232,6 +236,16 @@ function hasPaidProof(flattened: EvidenceEntry[]): boolean {
     }
   }
   return false;
+}
+
+function hasGoogleSourceDetailProof(flattened: EvidenceEntry[]): boolean {
+  const answer = firstStringField(flattened, ["how_heard_answer", "how_heard_about_us", "how_you_heard_about_us"]);
+  const detail = firstStringField(flattened, ["how_heard_about_us_details", "how_heard_details", "source_detail", "source_details"]);
+  if (!detail || !/\b(google|google ads|google ad|paid search|cpc|ppc|google search)\b/.test(detail)) {
+    return false;
+  }
+
+  return !answer || /\b(other|google)\b/.test(answer);
 }
 
 function hasOrganicUtmProof(flattened: EvidenceEntry[]): boolean {

@@ -79,6 +79,20 @@ describe("Sweep&Go new-client email source capture", () => {
     assert.equal(parsed.sourceBucket, "website_paid");
   });
 
+  it("maps Other plus Google source details to Website Paid", () => {
+    const parsed = parseSweepAndGoNewClientEmail({
+      ...baseEmail,
+      messageId: "msg-other-google",
+      body: baseEmail.body
+        .replace("Vehicle Signage", "Other")
+        .concat("\n\nHow you heard about us details\n\nGoogle")
+    });
+
+    assert.equal(parsed.howHeardAboutUs, "Other");
+    assert.equal(parsed.howHeardAboutUsDetails, "Google");
+    assert.equal(parsed.sourceBucket, "website_paid");
+  });
+
   it("maps Search Engine without details to Website Paid", () => {
     const parsed = parseSweepAndGoNewClientEmail({
       ...baseEmail,

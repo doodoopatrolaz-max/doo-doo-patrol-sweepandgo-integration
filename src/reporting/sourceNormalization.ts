@@ -10,7 +10,12 @@ export function normalizeCustomerSource(value: unknown): NormalizedCustomerSourc
     return "facebook";
   }
 
-  if (normalized.includes("website") || normalized.includes("web") || normalized.includes("quote")) {
+  if (
+    normalized.includes("website") ||
+    normalized.includes("web") ||
+    normalized.includes("quote") ||
+    /\b(other|search engine|google search)\b.*\bgoogle\b/.test(normalized)
+  ) {
     return "website";
   }
 

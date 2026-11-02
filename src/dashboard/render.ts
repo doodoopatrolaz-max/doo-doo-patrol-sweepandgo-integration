@@ -38,20 +38,17 @@ export function renderDashboard(data: DashboardData): string {
         <div class="brand-lockup">
           <img class="brand-logo" src="/assets/doo-doo-patrol-logo.png" alt="Doo Doo Patrol">
           <div>
-            <p class="eyebrow">Someone's gotta Doo it</p>
-            <h1>Doo Doo Patrol KPI Dashboard</h1>
-            <p class="subtitle">Clean yards. Clean data.</p>
+            <p class="eyebrow">Doo Doo Patrol</p>
+            <h1>Owner dashboard</h1>
           </div>
         </div>
         <a class="logout" href="/dashboard/logout">Log out</a>
       </header>
       <main class="dashboard">
         ${renderDateFilters(data.summary.range)}
-        ${renderSummary(data.summary)}
-        ${renderCharts(data.trends)}
-        ${renderSources(data.sources)}
-        ${renderDataNotes(data.summary)}
-        ${renderSyncHealth(data.syncHealth)}
+        ${renderSummary(data.summary, data.sources)}
+        <details class="section-group"><summary>Daily trends <span>Leads &amp; ad spend</span></summary>${renderCharts(data.trends)}</details>
+        <details class="section-group"><summary>Data status <span>Notes &amp; source updates</span></summary>${renderDataNotes(data.summary)}${renderSyncHealth(data.syncHealth)}</details>
       </main>
     `
   });
@@ -71,18 +68,18 @@ function renderDateFilters(range: DashboardDateRange): string {
       <div class="preset-row">
         ${presets.map(([key, label]) => `<a class="chip ${range.key === key ? "active" : ""}" href="/dashboard?range=${key}">${label}</a>`).join("")}
       </div>
-      <form class="custom-range" method="get" action="/dashboard">
+      <details class="custom-dates"><summary>Custom dates</summary><form class="custom-range" method="get" action="/dashboard">
         <input type="hidden" name="range" value="custom">
         <label>Start <input type="date" name="start" value="${escapeHtml(range.startDate)}"></label>
         <label>End <input type="date" name="end" value="${escapeHtml(range.endDate)}"></label>
         <button type="submit">Apply</button>
-      </form>
+      </form></details>
       <p class="range-label">${escapeHtml(range.label)}: ${escapeHtml(range.startDate)} to ${escapeHtml(range.endDate)} (${escapeHtml(range.timeZone)})</p>
     </section>
   `;
 }
 
-function renderSummary(summary: DashboardSummary): string {
+function renderSummary(summary: DashboardSummary, sources: DashboardSources): string {
   const activeClientsNote = summary.totalActiveClientsAsOf
     ? `As of latest Sweep&Go active roster snapshot: ${summary.totalActiveClientsAsOf}`
     : "Needs verification";
@@ -181,17 +178,38 @@ function renderSummary(summary: DashboardSummary): string {
     { label: "Cancellations", value: String(summary.cancellations) }
   ];
 
+  const find = (label: string) => [...primaryCards, ...secondaryCards].find(card => card.label === label)!;
+  const period = summary.range.startDate === summary.range.endDate ? shortDate(summary.range.startDate) : `${shortDate(summary.range.startDate)}–${shortDate(summary.range.endDate)}`;
+  const ownerCards: DashboardCard[] = [
+    { ...find("Total Active Clients"), label: "Active clients", context: "Latest roster snapshot", timestamp: summary.totalActiveClientsAsOf },
+    { ...find("Net Customer Growth"), label: "Net recurring growth", context: `${summary.newRecurringCustomers} new − ${summary.cancellations} cancellations`, note: "New recurring customers minus counted cancellations in the selected range. Not a reconciliation of all roster changes.", breakdown: [{label:"New recurring customers",value:String(summary.newRecurringCustomers)},{label:"Cancellations",value:String(summary.cancellations)}] },
+    { ...find("Total Leads"), label: "Unique leads", context: period },
+    { ...find("Close Rate"), label: "Lead closing rate", context: `${summary.closeRateMetrics.totalMatchedConversions} conversion${summary.closeRateMetrics.totalMatchedConversions === 1 ? "" : "s"} / ${summary.totalLeads} lead${summary.totalLeads === 1 ? "" : "s"}`, note: `Existing lead-cohort calculation. Recurring and one-time signups are included; ${summary.priorPeriodLeadConversions} prior-period lead conversion(s) are shown separately from the selected-period numerator.` },
+    { ...find("Churn Rate"), label: "Customer churn", context: `${summary.cancellations} / ${summary.churnRateDenominator} starting customers` },
+    { label: "Recurring earned revenue", value: money(summary.revenuePerHourMetrics.serviceRevenue), context: summary.revenuePerHourMetrics.unavailableReason === "No stored Sweep&Go completed job rows were available for the selected range." ? "No stored jobs for this range" : period, note: "Recurring earned service revenue, including noncredited skipped jobs and zero-duration revenue. Initial and one-time cleanup jobs are excluded. This is not net profit.", breakdown: [{label:"Recurring scooping",value:money(summary.revenuePerHourMetrics.scoopingRevenue)},{label:"Recurring spray",value:money(summary.revenuePerHourMetrics.sprayRevenue)},{label:"Skipped revenue included",value:money(summary.revenuePerHourMetrics.skippedRecurringRevenue)}] },
+    { ...find("Revenue Per Recurring Shift Hour"), label: "Revenue / shift hour", context: "Adjusted recurring shift time" },
+    { label: "Lead & acquisition cost", value: "", extraHtml: renderAcquisitionChannels(summary, sources), context: "Blended recorded ad spend", values: [
+      {label:"Per lead", value:summary.totalLeads > 0 ? maybeMoney(summary.costPerLead) : "Unavailable"},
+      {label:"Per new recurring", value:summary.newRecurringCustomers > 0 ? maybeMoney(summary.costPerNewRecurringCustomer) : "Unavailable"}
+    ], note: `Recorded Meta + Google spend divided by unique leads, or by all new recurring signups, in the selected period; one-time signups are excluded from acquisition cost. Recurring signups may come from earlier leads. These are blended period ratios, not matched-cohort paid-channel CAC or verified payments. ${summary.totalLeads === 0 ? "Per lead unavailable: no leads in the range. " : ""}${summary.newRecurringCustomers === 0 ? "Per new recurring unavailable: no new recurring signups in the range. " : ""}${summary.totalAdSpend === 0 ? "No recorded ad spend; zero does not establish free acquisition or complete source coverage." : "Uses stored spend; it does not certify complete marketing-cost coverage."}`, breakdown: [{label:"Recorded ad spend",value:money(summary.totalAdSpend)},{label:"Unique leads",value:String(summary.totalLeads)},{label:"New recurring signups",value:String(summary.newRecurringCustomers)},{label:"Period",value:period}] }
+  ];
   return `
-    <section>
-      <h2>Owner Scoreboard</h2>
-      <div class="cards owner-scoreboard primary">
-        ${primaryCards.map(renderCard).join("")}
-      </div>
-      <div class="cards owner-scoreboard secondary">
-        ${secondaryCards.map(renderCard).join("")}
-      </div>
-      ${renderServiceProductivity(summary)}
+    <section aria-labelledby="owner-heading">
+      <div class="section-heading"><h2 id="owner-heading">Owner Scoreboard</h2><p>Growth, retention &amp; route productivity</p></div>
+      <div class="cards owner-scoreboard primary">${ownerCards.map(renderCard).join("")}</div>
     </section>
+    <details class="section-group"><summary>Acquisition <span>Signups, sources &amp; ad costs</span></summary>
+      <div class="cards secondary">${["New Recurring Customers", "One-Time Cleanups", "Total Ad Spend", "Meta Spend", "Google Spend", "Cost Per Lead", "Cost Per New Customer"].map(label => renderCard({...find(label), context:period})).join("")}</div>
+      ${renderSources(sources)}
+    </details>
+    <details class="section-group"><summary>Retention &amp; assumptions <span>Cancellations, ticket &amp; LTV</span></summary>
+      <div class="cards secondary">${["Cancellations", "Average Monthly Ticket", "Lifetime Value"].map(label => renderCard({...find(label), context:label === "Average Monthly Ticket" ? "Configured assumption" : period})).join("")}</div>
+      <p class="panel-note">Same-calendar-month cancellation and return is excluded under your existing policy. Lifetime Value retains the existing formula; its monthly versus selected-period interpretation still needs review.</p>
+    </details>
+    <details class="section-group"><summary>Route productivity <span>Time, stops, scoop &amp; spray</span></summary>
+      <div class="cards secondary">${renderCard({...find("Revenue Per Recurring Service Hour"), context:period})}</div>
+      ${renderServiceProductivity(summary)}
+    </details>
   `;
 }
 
@@ -228,6 +246,10 @@ type DashboardCard = {
   label: string;
   value: string;
   note?: string;
+  context?: string;
+  timestamp?: string;
+  values?: DashboardCardBreakdown[];
+  extraHtml?: string;
   breakdown?: DashboardCardBreakdown[];
 };
 
@@ -238,22 +260,59 @@ type DashboardCardBreakdown = {
 
 function renderCard(card: DashboardCard): string {
   return `
-    <article class="card">
-      <span>${escapeHtml(card.label)}</span>
-      <strong>${escapeHtml(card.value)}</strong>
-      ${card.breakdown?.length ? `
-        <dl class="card-breakdown">
-          ${card.breakdown.map((row) => `
-            <div>
-              <dt>${escapeHtml(row.label)}</dt>
-              <dd>${escapeHtml(row.value)}</dd>
-            </div>
-          `).join("")}
-        </dl>
-      ` : ""}
-      ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ""}
+    <article class="card${card.extraHtml ? " channel-card" : ""}" aria-label="${escapeHtml(card.label)}">
+      <span class="card-label">${escapeHtml(card.label)}</span>
+      ${card.values ? `<dl class="metric-pair">${card.values.map(row => `<div><dt>${escapeHtml(row.label)}</dt><dd class="${row.value === "Unavailable" ? "unavailable-value" : ""}">${escapeHtml(row.value)}</dd></div>`).join("")}</dl>` : `<strong class="metric-value">${escapeHtml(card.value)}</strong>`}
+      ${card.context ? `<p class="card-context">${escapeHtml(card.context)}</p>` : ""}
+      ${card.timestamp ? `<time class="card-context" datetime="${escapeHtml(card.timestamp)}" title="${escapeHtml(card.timestamp)}">Updated ${escapeHtml(phoenixTime(card.timestamp))}</time>` : ""}
+      ${(card.breakdown?.length || card.note) ? `<details class="metric-details"><summary aria-label="Details for ${escapeHtml(card.label)}">Details</summary>
+        ${card.breakdown?.length ? `<dl class="card-breakdown">${card.breakdown.map(row => `<div><dt>${escapeHtml(row.label)}</dt><dd class="${row.value === "Unavailable" ? "unavailable-value" : ""}">${escapeHtml(row.value)}</dd></div>`).join("")}</dl>` : ""}
+        ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ""}
+        ${card.extraHtml ?? ""}
+      </details>` : ""}
     </article>
   `;
+}
+
+function renderAcquisitionChannels(summary: DashboardSummary, sources: DashboardSources): string {
+  const google = sources.campaignPerformance.filter(row => row.provider === "google_ads" || row.provider === "google");
+  const meta = sources.campaignPerformance.filter(row => row.provider === "meta");
+  const row = (label: string, value: string) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+  const channels = [
+    { title:"Google", records:google, spend:summary.googleSpend, bucket:"website_paid" as const,
+      leadsLabel:"Website Paid leads · proxy", conversionsLabel:"Website Paid conversions",
+      limitation:"Website Paid includes your approved Search Engine / Google self-report rules. It is not a verified Google Ads-only cohort. Conversions are dashboard recurring + one-time outcomes, not verified ad-linked sales.",
+      costReason:"Not available: no verified Google Ads-only lead or acquired-customer denominator." },
+    { title:"Facebook / Meta", records:meta, spend:summary.metaSpend, bucket:"facebook" as const,
+      leadsLabel:"Facebook leads · all sources", conversionsLabel:"Facebook conversions",
+      limitation:"The Facebook bucket combines paid, organic and self-reported social traffic. Conversions are dashboard recurring + one-time outcomes, not verified ad-linked sales.",
+      costReason:"Not available: paid Meta leads/customers are not separated from organic Facebook." }
+  ];
+  return `<div class="acquisition-channels"><h3>Google versus Facebook</h3><p class="panel-note">Same selected period. Spend records and dashboard attribution are shown separately; a completed sync with no rows does not verify zero spend.</p><div class="channel-grid">${channels.map(channel => {
+    const source = sources.leadSources.find(source => source.source === channel.bucket);
+    const conversions = summary.closeRateMetrics.sourceBreakdown[channel.bucket];
+    const connected = channel.title !== "Google" || summary.googleAdsStatus.connected;
+    const spend = !connected ? "Not available · Google not connected" : channel.records.length ? money(channel.spend) + (channel.spend === 0 ? " · recorded zero" : " · recorded") : "Not available · no spend rows";
+    return `<section class="channel-detail" aria-label="${escapeHtml(channel.title)} acquisition details"><h4>${escapeHtml(channel.title)}</h4><dl class="card-breakdown">
+      ${row("Ad spend",spend)}
+      ${row(channel.leadsLabel,source ? String(source.leads) : "Not available")}
+      ${row(channel.conversionsLabel,conversions ? String(conversions.conversions) : "Not available")}
+      ${row("New recurring signups",source ? String(source.newRecurringCustomers) : "Not available")}
+      ${row("Paid-channel CPL","Not available")}
+      ${row("Paid-channel acquisition cost","Not available")}
+      </dl><p class="panel-note">${escapeHtml(channel.costReason)}</p><p class="panel-note">${escapeHtml(channel.limitation)}</p>
+      ${connected && channel.records.length === 1 ? `<details class="platform-details"><summary>Ad-platform actions</summary><dl class="card-breakdown">${row("Platform conversion actions",String(channel.records[0].adPlatformConversions))}${row("Cost / platform action",maybeMoney(channel.records[0].costPerAdPlatformConversion))}</dl><p class="panel-note">Platform actions are not unique paying customers or dashboard customer acquisitions.</p></details>` : ""}
+    </section>`;
+  }).join("")}</div></div>`;
+}
+
+function shortDate(value: string): string {
+  const date = new Date(value + "T12:00:00Z");
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", {month:"short",day:"numeric",timeZone:"America/Phoenix"});
+}
+function phoenixTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-US", {month:"short",day:"numeric",hour:"numeric",minute:"2-digit",timeZone:"America/Phoenix",timeZoneName:"short"});
 }
 
 function detailedSourceBreakdownRows(input: DashboardDetailedSourceBreakdown): DashboardCardBreakdown[] {
@@ -283,21 +342,21 @@ function renderCharts(trends: DashboardTrendPoint[]): string {
       </div>
       <div>
         <h2>Cost Per Lead Trend</h2>
-        <table>
+        <div class="table-scroll" role="region" aria-label="Dashboard details table" tabindex="0"><table>
           <thead><tr><th>Date</th><th>Total leads</th><th>Cost per lead</th></tr></thead>
           <tbody>
             ${trends.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${row.totalLeads}</td><td>${escapeHtml(maybeMoney(row.costPerLead))}</td></tr>`).join("")}
           </tbody>
-        </table>
+        </table></div>
       </div>
       <div>
         <h2>Meta Spend vs Facebook Leads</h2>
-        <table>
+        <div class="table-scroll" role="region" aria-label="Dashboard details table" tabindex="0"><table>
           <thead><tr><th>Date</th><th>Meta spend</th><th>Facebook leads</th></tr></thead>
           <tbody>
             ${trends.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(money(row.metaSpend))}</td><td>${row.facebookLeads}</td></tr>`).join("")}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </section>
   `;
@@ -308,23 +367,23 @@ function renderSources(sources: DashboardSources): string {
     <section class="grid-two">
       <div>
         <h2>Lead Source Performance</h2>
-        <table>
+        <div class="table-scroll" role="region" aria-label="Dashboard details table" tabindex="0"><table>
           <thead><tr><th>Source</th><th>Leads</th><th>New recurring customers</th></tr></thead>
           <tbody>
             ${sources.leadSources.map((row) => `<tr><td>${escapeHtml(labelForDashboardSourceBucket(row.source))}</td><td>${row.leads}</td><td>${row.newRecurringCustomers}</td></tr>`).join("")}
           </tbody>
-        </table>
+        </table></div>
       </div>
       <div>
         <h2>Campaign Performance</h2>
-        <table>
+        <div class="table-scroll" role="region" aria-label="Dashboard details table" tabindex="0"><table>
           <thead><tr><th>Provider</th><th>Campaigns</th><th>Spend</th><th>Clicks</th><th>Avg CPC</th><th>Ad Conv.</th><th>Cost / Conv.</th><th>Dash Leads</th></tr></thead>
           <tbody>
             ${sources.campaignPerformance.length ? sources.campaignPerformance.map((row) => `
               <tr><td>${escapeHtml(title(row.provider))}</td><td>${row.campaignCount}</td><td>${escapeHtml(money(row.spend))}</td><td>${row.clicks}</td><td>${escapeHtml(maybeMoneyWithFallback(row.averageCpc, "No clicks"))}</td><td>${escapeHtml(metricNumber(row.adPlatformConversions))}</td><td>${escapeHtml(maybeMoneyWithFallback(row.costPerAdPlatformConversion, "No conversions"))}</td><td>${row.dashboardLeads}</td></tr>
             `).join("") : `<tr><td colspan="8">No ad performance rows for this range.</td></tr>`}
           </tbody>
-        </table>
+        </table></div>
       </div>
       <div>
         <h2>Unmatched Leads</h2>
@@ -364,7 +423,7 @@ function renderSyncHealth(syncHealth: DashboardSyncHealth): string {
           ${staleWarnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}
         </div>
       ` : ""}
-      <table>
+      <div class="table-scroll" role="region" aria-label="Dashboard details table" tabindex="0"><table>
         <thead>
           <tr><th>Provider</th><th>Status</th><th>Last started</th><th>Read</th><th>Written</th><th>Recent events</th><th>Failed events</th><th>Open issues</th></tr>
         </thead>
@@ -373,7 +432,7 @@ function renderSyncHealth(syncHealth: DashboardSyncHealth): string {
             <tr class="${row.isStale ? "stale-sync" : ""}">
               <td>${escapeHtml(title(row.provider))}</td>
               <td>${escapeHtml(row.latestStatus)}</td>
-              <td>${escapeHtml(row.lastStartedAt ?? "No data")}</td>
+              <td>${row.lastStartedAt ? `<time datetime="${escapeHtml(row.lastStartedAt)}" title="${escapeHtml(row.lastStartedAt)}">${escapeHtml(phoenixTime(row.lastStartedAt))}</time>` : "No data"}</td>
               <td>${row.recordsRead}</td>
               <td>${row.recordsWritten}</td>
               <td>${row.recentEvents}</td>
@@ -382,7 +441,7 @@ function renderSyncHealth(syncHealth: DashboardSyncHealth): string {
             </tr>
           `).join("") : `<tr><td colspan="8">No sync runs found yet.</td></tr>`}
         </tbody>
-      </table>
+      </table></div>
     </section>
   `;
 }
@@ -469,6 +528,92 @@ function pageShell(input: { title: string; body: string }): string {
     @media (max-width: 1100px) { .owner-scoreboard.primary, .owner-scoreboard.secondary, .mini-stats { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
     @media (max-width: 850px) { .topbar { align-items:flex-start; flex-direction:column; } .brand-lockup { align-items:flex-start; } .brand-logo { width:74px; height:74px; } .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary, .grid-two { grid-template-columns:1fr; } .bar-row { grid-template-columns:48px 1fr 64px; } }
     @media (max-width: 520px) { .brand-lockup { flex-direction:column; gap:10px; } .brand-logo { width:88px; height:88px; } .mini-stats { grid-template-columns:1fr; } }
+
+    /* Compact owner preview: no calculation or query changes. */
+    .topbar { padding:14px max(16px, calc((100vw - 1120px)/2)); background:#102a43; gap:12px; }
+    .brand-lockup { gap:10px; align-items:center; }
+    .brand-logo { width:42px; height:42px; filter:none; }
+    .topbar .eyebrow { font-size:.7rem; color:#b7dcf3; margin:0 0 3px; letter-spacing:.08em; }
+    .topbar h1 { font-size:1.25rem; line-height:1.2; }
+    .logout { padding:12px; font-size:.8rem; background:transparent; color:white; white-space:nowrap; }
+    .dashboard { width:min(1152px,100%); padding:0 16px 32px; }
+    .dashboard section { margin-top:20px; min-width:0; }
+    .filters { padding:12px; box-shadow:none; margin-top:12px !important; }
+    .preset-row { gap:6px; }
+    .chip { display:inline-flex; align-items:center; min-height:44px; padding:8px 10px; font-size:.82rem; }
+    .custom-dates { margin-top:4px; }
+    summary { cursor:pointer; }
+    .custom-dates > summary { min-height:44px; padding:12px 0; font-size:.85rem; font-weight:700; color:#244b68; }
+    .custom-range { margin:0 0 8px; gap:8px; }
+    .custom-range label { flex:1; min-width:110px; font-size:.8rem; }
+    .custom-range input { width:100%; min-width:0; }
+    .custom-range button { min-height:44px; background:#14638f; }
+    .range-label { margin:0; font-size:.78rem; line-height:1.5; }
+    .section-heading h2 { margin:0; font-size:1.08rem; }
+    .section-heading p { margin:4px 0 12px; font-size:.8rem; color:#486476; }
+    .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary { grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; align-items:start; }
+    .card { padding:14px; min-height:0; min-width:0; box-shadow:none; border-radius:12px; border-color:#d0dfe9; }
+    .card > .card-label { min-height:0; font-size:.84rem; line-height:1.35; color:#36536a; font-weight:650; }
+    .card > .metric-value { margin:7px 0 5px; font-size:clamp(1.55rem,2.8vw,2.15rem); font-weight:750; line-height:1.12; letter-spacing:-.025em; font-variant-numeric:tabular-nums; overflow-wrap:normal; }
+    .card-context { display:block; margin:0; color:#486476; font-size:.73rem; line-height:1.45; }
+    .card time { margin-top:3px; }
+    .channel-card:has(.metric-details[open]) { grid-column:1 / -1; }
+    .channel-card:has(.metric-details[open]) > .metric-pair { max-width:340px; }
+    .acquisition-channels { margin-top:16px; border-top:1px solid #d0dfe9; padding-top:12px; }
+    .acquisition-channels h3 { font-size:1rem; margin:0; }
+    .channel-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .channel-detail { margin-top:12px !important; background:#f3f8fc; border:1px solid #d0dfe9; border-radius:8px; padding:12px; }
+    .channel-detail h4 { margin:0 0 10px; font-size:.95rem; }
+    .channel-detail .card-breakdown div { align-items:baseline; }
+    .channel-detail .card-breakdown dd { text-align:right; max-width:52%; }
+    .channel-detail .panel-note { font-size:.76rem; line-height:1.5; }
+    .platform-details summary { min-height:44px; padding:12px 0; font-size:.8rem; color:#126390; }
+    @media(max-width:650px) { .channel-grid { grid-template-columns:1fr; } }
+    .metric-pair { margin:8px 0; display:grid; gap:8px; }
+    .metric-pair div { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
+    .metric-pair dt { font-size:.72rem; line-height:1.35; color:#36536a; max-width:65px; }
+    .metric-pair dd { margin:0; font-size:1.25rem; font-weight:750; color:#102a43; font-variant-numeric:tabular-nums; }
+    .metric-pair .unavailable-value { font-size:.72rem; }
+    .metric-details { margin-top:4px; }
+    .metric-details > summary { color:#126390; min-height:44px; display:list-item; padding:12px 0 8px; font-size:.76rem; font-weight:700; }
+    .card-breakdown div { font-size:.76rem; line-height:1.5; font-weight:500; }
+    .card small { font-weight:400; font-size:.76rem; line-height:1.5; }
+    .section-group { margin-top:14px; border:1px solid #d0dfe9; background:white; border-radius:12px; padding:0 14px; min-width:0; }
+    .section-group > summary { min-height:58px; padding:15px 0; font-weight:750; color:#173c58; font-size:.94rem; }
+    .section-group > summary span { display:block; margin:3px 0 0 16px; color:#486476; font-size:.76rem; font-weight:400; }
+    .section-group[open] { padding-bottom:14px; }
+    .section-group .grid-two { margin-top:12px; }
+    .section-group .grid-two > div { padding:12px; box-shadow:none; min-width:0; }
+    .section-group h2 { font-size:.96rem; }
+    .table-scroll { overflow-x:auto; max-width:100%; border-radius:8px; }
+    .table-scroll table { min-width:360px; overflow:visible; }
+    th, td { font-size:.8rem; padding:10px 8px; vertical-align:top; }
+    th:not(:first-child),td:not(:first-child) { text-align:right; font-variant-numeric:tabular-nums; }
+    .mini-stats { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .mini-stats span { font-weight:500; line-height:1.4; }
+    .notes { box-shadow:none; font-size:.84rem; line-height:1.5; }
+    a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, .table-scroll:focus-visible { outline:3px solid #b15a00; outline-offset:3px; }
+    @media(max-width:850px) {
+      .topbar { flex-direction:row; align-items:center; }
+      .brand-lockup { flex-direction:row; align-items:center; gap:10px; }
+      .brand-logo { width:38px; height:38px; }
+      .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .grid-two { grid-template-columns:1fr; }
+      .mini-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    }
+    @media(max-width:520px) {
+      .dashboard { padding:0 12px 24px; }
+      .topbar { padding:12px; }
+      .topbar h1 { font-size:1.05rem; }
+      .brand-logo { width:34px; height:34px; }
+      .card { padding:12px 10px 4px; }
+      .card > .metric-value { font-size:1.6rem; }
+      .card > .card-label { font-size:.78rem; }
+      .card-context { font-size:.7rem; }
+      .cards, .owner-scoreboard.primary { gap:8px; }
+      .section-group { padding-left:10px; padding-right:10px; }
+    }
+    @media(max-width:340px) { .cards, .owner-scoreboard.primary, .owner-scoreboard.secondary { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>${input.body}</body>

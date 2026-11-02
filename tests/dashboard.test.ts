@@ -2334,21 +2334,13 @@ describe("dashboard KPI aggregation", () => {
     const html = renderDashboard(dashboardData(summary));
 
     assert(html.includes("Owner Scoreboard"));
-    assert(html.indexOf("Total Active Clients") < html.indexOf("Total Leads"));
-    assert(html.indexOf("Total Active Clients") < html.indexOf("One-Time Cleanups"));
-    assert(html.indexOf("One-Time Cleanups") < html.indexOf("Total Leads"));
-    assert(html.indexOf("Total Leads") < html.indexOf("New Recurring Customers"));
+    const ownerLabels = ["Active clients", "Net recurring growth", "Unique leads", "Lead closing rate", "Customer churn", "Recurring earned revenue", "Revenue / shift hour", "Lead &amp; acquisition cost"];
+    for (let i = 1; i < ownerLabels.length; i++) assert(html.indexOf(`aria-label="${ownerLabels[i-1]}"`) < html.indexOf(`aria-label="${ownerLabels[i]}"`));
     assert(html.includes("One-time cleanup signups in the selected range. Separate from recurring active clients."));
-    assert(html.indexOf("New Recurring Customers") < html.indexOf("Close Rate"));
-    assert(html.indexOf("Close Rate") < html.indexOf("Churn Rate"));
-    assert(html.indexOf("Churn Rate") < html.indexOf("Average Monthly Ticket"));
-    assert(html.indexOf("Average Monthly Ticket") < html.indexOf("Lifetime Value"));
-    assert(html.indexOf("Lifetime Value") < html.indexOf("Revenue Per Recurring Service Hour"));
-    assert(html.indexOf("Revenue Per Recurring Service Hour") < html.indexOf("Net Customer Growth"));
-    assert(html.indexOf("Net Customer Growth") < html.indexOf("Total Ad Spend"));
-    assert(html.indexOf("Total Ad Spend") < html.indexOf("Meta Spend"));
+    assert(html.includes('class="metric-details"'));
+    assert(html.includes('class="table-scroll"'));
     assert(!html.includes("<span>Estimated MRR</span>"));
-    assert(html.includes("<span>Average Monthly Ticket</span>"));
+    assert(html.includes('<span class="card-label">Average Monthly Ticket</span>'));
     assert(html.includes("$92.00"));
     assert(html.includes("As of latest Sweep&amp;Go active roster snapshot"));
     assert(html.includes("/assets/doo-doo-patrol-logo.png"));
@@ -2432,7 +2424,7 @@ describe("dashboard KPI aggregation", () => {
     assert.equal(summary.averageMonthlyTicket, 92);
     assert.equal(summary.estimatedActiveMrr, null);
     assert.equal(summary.averageMonthlyTicketReason, "Temporary configured constant. Update the dashboard config when the business chooses a new average ticket.");
-    assert(html.includes("<span>Average Monthly Ticket</span>"));
+    assert(html.includes('<span class="card-label">Average Monthly Ticket</span>'));
     assert(!html.includes("<span>Estimated MRR</span>"));
     assert(!html.includes("<strong>Unavailable</strong>"));
     assert(summary.dataNotes.some((note) => note.includes("Average Monthly Ticket is currently configured")));
@@ -2547,8 +2539,8 @@ describe("dashboard KPI aggregation", () => {
     assert(html.includes("New Recurring Customers"));
     assert(html.includes("Other/Unknown"));
     assert(html.includes("Prior-period lead"));
-    assert(html.includes("Includes 1 prior-period lead conversion."));
-    assert(html.includes("One-time cleanup signups are included in close rate"));
+    assert(html.includes("1 prior-period lead conversion(s) are shown separately from the selected-period numerator."));
+    assert(html.includes("Recurring and one-time signups are included"));
   });
 
   it("updates Facebook and total close rates when Facebook recurring customers exist", async () => {

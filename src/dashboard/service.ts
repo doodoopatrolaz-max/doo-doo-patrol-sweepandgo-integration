@@ -220,7 +220,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   async getTrends(range: DashboardDateRange): Promise<DashboardTrendPoint[]> {
-    const [spendRows, leadRows, customerRows, directSignupLeadCredits, oneTimeCleanupLeadCredits] = await Promise.all([
+    const [spendRows, reportingLeadRows, customerRows] = await Promise.all([
       this.pool.query(
         `SELECT report_date::text AS date,
                 SUM(CASE WHEN platform = 'meta' THEN spend_amount ELSE 0 END)::float AS meta_spend,
@@ -231,19 +231,7 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          ORDER BY report_date`,
         [range.startDate, range.endDate]
       ),
-      this.pool.query(
-        `SELECT ${leadReportingDateSql("o.original_lead_date")}::text AS date,
-                COUNT(*) FILTER (WHERE original_lead_source = 'facebook')::int AS facebook_leads,
-                COUNT(*) FILTER (WHERE original_lead_source = 'website')::int AS website_leads,
-                COUNT(*)::int AS total_leads
-         FROM opportunities o
-         WHERE ${leadReportingDateSql("o.original_lead_date")} BETWEEN $1::date AND $2::date
-           AND original_lead_source IN ('facebook', 'website', 'other', 'unknown')
-           AND ${reportingLeadExclusionSql("o")}
-         GROUP BY ${leadReportingDateSql("o.original_lead_date")}
-         ORDER BY ${leadReportingDateSql("o.original_lead_date")}`,
-        [range.startDate, range.endDate]
-      ),
+      this.reportingLeadRows(range),
       this.pool.query(
         `SELECT first_recurring_date::text AS date,
                 COUNT(*)::int AS new_recurring_customers
@@ -252,33 +240,31 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
          GROUP BY first_recurring_date
          ORDER BY first_recurring_date`,
         [range.startDate, range.endDate]
-      ),
-      this.directSignupLeadCreditsByDate(range),
-      this.oneTimeCleanupLeadCreditsByDate(range)
+      )
     ]);
 
     const spendByDate = indexByDate(spendRows.rows);
-    const leadsByDate = indexByDate(leadRows.rows);
+    const leadsByDate = new Map<string, SourceMetrics>();
+    // Collapse before assigning dates so later evidence reattributes the original lead.
+    for (const lead of collapseReportingRows(reportingLeadRows)) {
+      if (!lead.date) continue;
+      const entry = leadsByDate.get(lead.date) ?? { legacy: emptySourceBreakdown(), detailed: emptyDetailedSourceBreakdown() };
+      entry.legacy[legacySourceFromBucket(lead.bucket)] += 1;
+      addToDetailedBreakdown(entry.detailed, lead.bucket);
+      leadsByDate.set(lead.date, entry);
+    }
     const customersByDate = indexByDate(customerRows.rows);
 
     return enumerateDates(range.startDate, range.endDate).map((date) => {
       const spend = spendByDate.get(date) ?? {};
-      const leads = leadsByDate.get(date) ?? {};
-      const directSignupLeads = directSignupLeadCredits.get(date);
-      const oneTimeCleanupLeads = oneTimeCleanupLeadCredits.get(date);
+      const leads = leadsByDate.get(date);
       const customers = customersByDate.get(date) ?? {};
       const metaSpend = numberValue(spend.meta_spend);
       const googleSpend = numberValue(spend.google_spend);
       const totalSpend = metaSpend + googleSpend;
-      const facebookLeads = integerValue(leads.facebook_leads)
-        + (directSignupLeads?.legacy.facebook ?? 0)
-        + (oneTimeCleanupLeads?.legacy.facebook ?? 0);
-      const websiteLeads = integerValue(leads.website_leads)
-        + (directSignupLeads?.legacy.website ?? 0)
-        + (oneTimeCleanupLeads?.legacy.website ?? 0);
-      const totalLeads = integerValue(leads.total_leads)
-        + sumDetailed(directSignupLeads?.detailed)
-        + sumDetailed(oneTimeCleanupLeads?.detailed);
+      const facebookLeads = leads?.legacy.facebook ?? 0;
+      const websiteLeads = leads?.legacy.website ?? 0;
+      const totalLeads = sumDetailed(leads?.detailed);
       const newRecurringCustomers = integerValue(customers.new_recurring_customers);
 
       return {
@@ -545,9 +531,14 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
   }
 
   private async leadsBySource(range: DashboardDateRange): Promise<SourceMetrics> {
+    return rowsToSourceMetrics(await this.reportingLeadRows(range));
+  }
+
+  private async reportingLeadRows(range: DashboardDateRange): Promise<Array<Record<string, unknown>>> {
     const [result, directSignupLeadRows, oneTimeCleanupRows] = await Promise.all([
       this.pool.query(
       `SELECT o.original_lead_source,
+              ${leadReportingDateSql("o.original_lead_date")}::text AS dashboard_lead_date,
               o.source,
               o.metadata,
               o.pipeline_name,
@@ -568,8 +559,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.directSignupLeadRows(range),
       this.oneTimeCleanupSignupRows(range)
     ]);
-    return rowsToSourceMetrics([
+    return [
       ...result.rows.map((row) => ({
+      dashboard_lead_date: row.dashboard_lead_date,
       original_lead_source: row.original_lead_source,
       source: row.source,
       metadata: row.metadata,
@@ -582,9 +574,9 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       dashboard_phone: row.dashboard_phone,
       matched_customer_source_evidence: row.matched_customer_source_evidence
       })),
-      ...directSignupLeadRows,
-      ...oneTimeCleanupRows.map((row) => row.sourceInput)
-    ]);
+      ...directSignupLeadRows.map((row) => ({ ...row, dashboard_lead_date: row.direct_signup_lead_date })),
+      ...oneTimeCleanupRows.map((row) => ({ ...row.sourceInput, dashboard_lead_date: row.cleanupDate }))
+    ];
   }
 
   private async newRecurringCustomers(range: DashboardDateRange): Promise<NewRecurringCustomerMetrics> {
@@ -1158,34 +1150,6 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
     };
   }
 
-  private async directSignupLeadCreditsByDate(range: DashboardDateRange): Promise<Map<string, SourceMetrics>> {
-    const rows = await this.directSignupLeadRows(range);
-    const byDate = new Map<string, SourceMetrics>();
-    for (const row of rows) {
-      const date = stringValue(row.direct_signup_lead_date);
-      if (!date) {
-        continue;
-      }
-      const entry = byDate.get(date) ?? { legacy: emptySourceBreakdown(), detailed: emptyDetailedSourceBreakdown() };
-      const metrics = rowsToSourceMetrics([row]);
-      addSourceMetrics(entry, metrics);
-      byDate.set(date, entry);
-    }
-    return byDate;
-  }
-
-  private async oneTimeCleanupLeadCreditsByDate(range: DashboardDateRange): Promise<Map<string, SourceMetrics>> {
-    const rows = await this.oneTimeCleanupSignupRows(range);
-    const byDate = new Map<string, SourceMetrics>();
-    for (const row of rows) {
-      const entry = byDate.get(row.cleanupDate) ?? { legacy: emptySourceBreakdown(), detailed: emptyDetailedSourceBreakdown() };
-      const metrics = rowsToSourceMetrics([row.sourceInput]);
-      addSourceMetrics(entry, metrics);
-      byDate.set(row.cleanupDate, entry);
-    }
-    return byDate;
-  }
-
   private async directSignupLeadRows(range: DashboardDateRange): Promise<Array<Record<string, unknown>>> {
     const result = await this.pool.query(
       `SELECT /* direct_signup_reporting_leads */
@@ -1643,22 +1607,29 @@ function rowsToSourceMetrics(rows: Array<Record<string, unknown>>): SourceMetric
 }
 
 function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): DashboardSourceBucket[] {
-  const unkeyedBuckets: DashboardSourceBucket[] = [];
-  const groups: Array<{ keys: Set<string>; bucket: DashboardSourceBucket }> = [];
+  return collapseReportingRows(rows).map((row) => row.bucket);
+}
+
+type CollapsedReportingRow = { bucket: DashboardSourceBucket; date?: string };
+
+function collapseReportingRows(rows: Array<Record<string, unknown>>): CollapsedReportingRow[] {
+  const unkeyedRows: CollapsedReportingRow[] = [];
+  const groups: Array<{ keys: Set<string>; bucket: DashboardSourceBucket; date?: string }> = [];
   const groupsByKey = new Map<string, number>();
 
   for (const row of rows) {
     const bucket = reportingSourceBucket(row);
+    const date = stringValue(row.dashboard_lead_date);
     const keys = sourceMetricIdentityKeys(row);
     if (keys.length === 0) {
-      unkeyedBuckets.push(bucket);
+      unkeyedRows.push({ bucket, date });
       continue;
     }
 
     const existingIndexes = [...new Set(keys.map((key) => groupsByKey.get(key)).filter((index): index is number => index !== undefined))];
     if (existingIndexes.length === 0) {
       const index = groups.length;
-      groups.push({ keys: new Set(keys), bucket });
+      groups.push({ keys: new Set(keys), bucket, date });
       for (const key of keys) {
         groupsByKey.set(key, index);
       }
@@ -1668,6 +1639,7 @@ function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): D
     const primaryIndex = existingIndexes[0];
     const primary = groups[primaryIndex];
     primary.bucket = higherPriorityDashboardSourceBucket(primary.bucket, bucket);
+    primary.date = earliestReportingDate(primary.date, date);
     for (const key of keys) {
       primary.keys.add(key);
     }
@@ -1678,6 +1650,7 @@ function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): D
       }
       const duplicate = groups[duplicateIndex];
       primary.bucket = higherPriorityDashboardSourceBucket(primary.bucket, duplicate.bucket);
+      primary.date = earliestReportingDate(primary.date, duplicate.date);
       for (const key of duplicate.keys) {
         primary.keys.add(key);
       }
@@ -1692,7 +1665,11 @@ function collapseRowsBySourcePrecedence(rows: Array<Record<string, unknown>>): D
     });
   }
 
-  return [...groups.map((group) => group.bucket), ...unkeyedBuckets];
+  return [...groups.map(({ bucket, date }) => ({ bucket, date })), ...unkeyedRows];
+}
+
+function earliestReportingDate(current?: string, candidate?: string): string | undefined {
+  return !current ? candidate : !candidate ? current : current < candidate ? current : candidate;
 }
 
 function reportingSourceBucket(row: Record<string, unknown>): DashboardSourceBucket {
@@ -1810,15 +1787,6 @@ function addDetailedBreakdown(target: DashboardDetailedSourceBreakdown, addition
 function addSourceMetricsFromDetailed(target: DashboardSourceBreakdown, addition: DashboardDetailedSourceBreakdown): void {
   for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
     target[legacySourceFromBucket(bucket)] += addition[bucket];
-  }
-}
-
-function addSourceMetrics(target: SourceMetrics, addition: SourceMetrics): void {
-  for (const source of Object.keys(target.legacy) as LegacySource[]) {
-    target.legacy[source] += addition.legacy[source];
-  }
-  for (const bucket of DASHBOARD_SOURCE_BUCKETS) {
-    target.detailed[bucket] += addition.detailed[bucket];
   }
 }
 

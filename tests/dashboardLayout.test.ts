@@ -18,3 +18,16 @@ test('eight-card owner layout retains live values without mutating data',async()
 test('channel details preserve Facebook activity without claiming Meta spend or ad-linked customers',async()=>{const html=renderDashboard(await fixture()),fb=html.split('aria-label="Facebook / Meta acquisition details"')[1].split('</section>')[0],google=html.split('aria-label="Google acquisition details"')[1].split('</section>')[0];assert(fb.includes('Facebook leads · all sources</dt><dd>4'));assert(fb.includes('Facebook conversions</dt><dd>1'));assert(fb.includes('Not available · no spend rows'));assert(google.includes('$100.00 · recorded'));assert(google.includes('Website Paid leads · proxy</dt><dd>6'));assert(google.includes('Paid-channel CPL</dt><dd>Not available'));assert(google.includes('not unique paying customers'));});
 test('missing spend, recorded zero, disconnected Google and missing customer denominator remain distinct',async()=>{const data=await fixture();data.sources.campaignPerformance.push({...data.sources.campaignPerformance[0],provider:'meta',spend:0,adPlatformConversions:0,costPerAdPlatformConversion:null});assert(renderDashboard(data).includes('$0.00 · recorded zero'));data.summary.googleAdsStatus.connected=false;assert(renderDashboard(data).includes('Not available · Google not connected'));data.sources.campaignPerformance=[];data.summary.googleAdsStatus.connected=true;data.summary.newRecurringCustomers=0;data.summary.costPerNewRecurringCustomer=0;const html=renderDashboard(data);assert.equal((html.match(/Not available · no spend rows/g)||[]).length,2);assert(html.includes('Per new recurring unavailable: no new recurring signups'));assert(html.includes('class="unavailable-value">Unavailable'));});
 test('date form, authentication and responsive disclosures remain native',async()=>{const html=renderDashboard(await fixture());assert(html.includes('method="get" action="/dashboard"'));assert(html.includes('name="start"'));assert(html.includes('name="end"'));assert(html.includes('href="/dashboard/logout"'));assert(html.includes('class="metric-details"'));assert(html.includes('grid-template-columns:repeat(2,minmax(0,1fr))'));assert(html.includes('class="table-scroll"'));const login=renderDashboardLogin({disabled:false});assert(login.includes('action="/dashboard/login"'));assert(login.includes('type="password"'));assert(login.includes('autocomplete="current-password"'));});
+test('closing source details pair existing cohort conversions and rates, including empty denominators',async()=>{
+ const data=await fixture();
+ data.summary.closeRateMetrics.sourceBreakdown.website_paid={leads:2,conversions:2,closeRate:100};
+ data.summary.closeRateMetrics.sourceBreakdown.facebook={leads:1,conversions:1,closeRate:100};
+ let html=renderDashboard(data);
+ assert(html.includes('Website Paid</dt><dd class="">2 · 100%</dd>'));
+ assert(html.includes('Facebook</dt><dd class="">1 · 100%</dd>'));
+ assert(html.includes('0 · No leads</dd>'));
+ data.summary.closeRateMetrics.sourceBreakdown.facebook={leads:3,conversions:0,closeRate:0};
+ html=renderDashboard(data);assert(html.includes('Facebook</dt><dd class="">0 · 0%</dd>'));
+ data.summary.closeRateMetrics.sourceBreakdown.facebook={leads:3,conversions:1,closeRate:33.33};
+ html=renderDashboard(data);assert(html.includes('Facebook</dt><dd class="">1 · 33.33%</dd>'));
+});

@@ -113,10 +113,13 @@ function renderSummary(summary: DashboardSummary, sources: DashboardSources): st
     {
       label: "Close Rate",
       value: maybePercent(summary.closeRateMetrics.totalCloseRate),
-      breakdown: DASHBOARD_SOURCE_BUCKETS.map((bucket) => ({
-        label: labelForDashboardSourceBucket(bucket),
-        value: maybePercent(summary.closeRateMetrics.sourceBreakdown[bucket].closeRate)
-      })),
+      breakdown: DASHBOARD_SOURCE_BUCKETS.map((bucket) => {
+        const source = summary.closeRateMetrics.sourceBreakdown[bucket];
+        return {
+          label: labelForDashboardSourceBucket(bucket),
+          value: `${source.conversions} · ${source.leads > 0 ? maybePercent(source.closeRate) : "No leads"}`
+        };
+      }),
       note: summary.priorPeriodLeadConversions > 0
         ? `Includes ${summary.priorPeriodLeadConversions} prior-period lead conversion${summary.priorPeriodLeadConversions === 1 ? "" : "s"}. One-time cleanup signups are included in close rate; recurring customer count remains separate.`
         : "Close rate includes recurring customer signups and one-time cleanup signups in the selected period. Recurring customer count remains separate."

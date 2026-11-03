@@ -47,6 +47,7 @@ export type DashboardSummary = {
   averageRevenuePerShiftHourReason?: string;
   revenuePerShiftHourMetrics: DashboardRevenuePerShiftHourMetrics;
   priorPeriodLeadConversions: number;
+  recurringReturnMetrics?: import("./recurringReturns.ts").RecurringReturnMetrics;
   netRecurringCustomerGrowth: number;
   closeRate: number | null;
   closeRateMetrics: DashboardCloseRateMetrics;

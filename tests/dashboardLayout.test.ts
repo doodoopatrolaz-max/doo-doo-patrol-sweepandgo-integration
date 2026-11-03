@@ -31,3 +31,5 @@ test('closing source details pair existing cohort conversions and rates, includi
  data.summary.closeRateMetrics.sourceBreakdown.facebook={leads:3,conversions:1,closeRate:33.33};
  html=renderDashboard(data);assert(html.includes('Facebook</dt><dd class="">1 · 33.33%</dd>'));
 });
+
+test('growth disclosure separates returns, first-time additions, exclusions and incomplete coverage',async()=>{const data=await fixture();data.summary.recurringReturnMetrics={count:2,growthContribution:1,sameMonthResumptions:1,needsReview:0,available:true};data.summary.netRecurringCustomerGrowth=3;let html=renderDashboard(data);assert(html.includes('2 first-time + 1 returns − 0 cancellations'));assert(html.includes('Same-month resumptions'));assert(html.includes('Historical losses are not recalculated'));data.summary.recurringReturnMetrics.available=false;html=renderDashboard(data);assert(html.includes('Return tracking is not available'));assert(html.includes('unverified returns'));});

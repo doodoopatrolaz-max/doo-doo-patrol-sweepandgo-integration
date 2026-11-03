@@ -1,3 +1,4 @@
+import { recurringReturnMetrics, type RecurringReturn } from "./recurringReturns.ts";
 import { enumerateDates, type DashboardDateRange } from "./dateRange.ts";
 import { calculateCompletedJobRevenueMetrics, calculateCompletedJobRevenueMetricsFromFacts } from "./serviceRevenue.ts";
 import {
@@ -102,7 +103,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       churnDenominator,
       revenuePerHourMetrics,
       closeRateMetricsBase,
-      googleAdsStatus
+      googleAdsStatus,
+      returns
     ] = await Promise.all([
       this.adSpendByPlatform(range),
       this.leadsBySource(range),
@@ -113,7 +115,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       this.activeCustomersAtRangeStart(range),
       this.revenuePerHourMetrics(range),
       this.closeRateMetrics(range),
-      this.googleAdsStatus()
+      this.googleAdsStatus(),
+      this.recurringReturns(range)
     ]);
     const priorPeriodLeadConversions = closeRateMetricsBase.totalPriorPeriodLeadConversions;
 
@@ -198,7 +201,8 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
         : "Recurring earned revenue, including paid skipped recurring jobs, divided by adjusted recurring shift hours. Initial and one-time cleanup time is removed.",
       revenuePerShiftHourMetrics,
       priorPeriodLeadConversions,
-      netRecurringCustomerGrowth: newRecurringCustomers - cancellations.countedCancellations,
+      recurringReturnMetrics: returns,
+      netRecurringCustomerGrowth: newRecurringCustomers + returns.growthContribution - cancellations.countedCancellations,
       closeRate: closeRateMetrics.totalCloseRate,
       closeRateMetrics,
       dataNotes: dataNotes({
@@ -577,6 +581,18 @@ export class PostgresDashboardDataSource implements DashboardDataSource {
       ...directSignupLeadRows.map((row) => ({ ...row, dashboard_lead_date: row.direct_signup_lead_date })),
       ...oneTimeCleanupRows.map((row) => ({ ...row.sourceInput, dashboard_lead_date: row.cleanupDate }))
     ];
+  }
+
+  private async recurringReturns(range: DashboardDateRange) {
+    const exists = await this.pool.query("SELECT to_regclass('public.verified_recurring_returns') AS table_name");
+    if (!exists.rows[0]?.table_name) return {...recurringReturnMetrics([], range), available:false};
+    const result = await this.pool.query(`SELECT customer_id::text AS "customerId", episode_key AS "episodeKey",
+      returned_at::text AS "returnedAt", verified, prior_recurring_verified AS "priorRecurringVerified",
+      recurring_service_verified AS "recurringServiceVerified", kind, prior_loss_timing AS "priorLossTiming"
+      FROM verified_recurring_returns
+      WHERE returned_at >= ($1::date::timestamp AT TIME ZONE 'America/Phoenix')
+        AND returned_at < (($2::date + 1)::timestamp AT TIME ZONE 'America/Phoenix')`, [range.startDate, range.endDate]);
+    return recurringReturnMetrics(result.rows as RecurringReturn[], range);
   }
 
   private async newRecurringCustomers(range: DashboardDateRange): Promise<NewRecurringCustomerMetrics> {
